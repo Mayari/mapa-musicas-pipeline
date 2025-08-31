@@ -5,13 +5,16 @@ suppressPackageStartupMessages({
   library(glue)
 })
 
-# Extractor version banner (shows up in logs if this file is loaded)
-message("[extract_openai.R] v2025-08-31")
+message("[extract_openai.R] v2025-08-31+diag")
 
 # --- config via env (optional) ---
-openai_model <- Sys.getenv("OPENAI_MODEL", unset = "gpt-4o-mini")
-throttle_sec <- suppressWarnings(as.numeric(Sys.getenv("OPENAI_THROTTLE_SEC", unset = "2")))
-if (is.na(throttle_sec)) throttle_sec <- 2
+get_num <- function(x, fallback) {
+  v <- suppressWarnings(as.numeric(Sys.getenv(x, unset = as.character(fallback))))
+  if (is.null(v) || length(v) == 0 || is.na(v) || !is.finite(v)) return(fallback)
+  v
+}
+openai_model  <- Sys.getenv("OPENAI_MODEL", unset = "gpt-4o-mini")
+throttle_sec  <- get_num("OPENAI_THROTTLE_SEC", 2)
 
 # Safe base64 for local image files (handles unknown/zero size)
 img_to_data_uri <- function(path){
@@ -19,33 +22,34 @@ img_to_data_uri <- function(path){
   ext  <- tolower(tools::file_ext(path))
   mime <- ifelse(ext %in% c("jpg","jpeg"), "image/jpeg", "image/png")
 
-  size <- suppressWarnings(as.integer(file.info(path)$size))
-  if (!is.na(size) && size > 0) {
-    raw <- readBin(path, what = "raw", n = size)
+  sz <- suppressWarnings(as.integer(file.info(path)$size))
+  message(sprintf("[img] %s size=%s bytes ext=%s", path, ifelse(is.na(sz), "NA", as.character(sz)), ext))
+
+  raw <- NULL
+  if (!is.na(sz) && sz > 0) {
+    raw <- readBin(path, what = "raw", n = sz)
   } else {
-    message("Warning: unknown file size, streaming read: ", path)
+    message("[img] unknown size → streaming read")
     con <- file(path, "rb"); on.exit(close(con), add = TRUE)
     raw <- readBin(con, what = "raw", n = 1e8)  # up to 100MB
   }
   if (length(raw) == 0) stop("Zero-length image bytes for: ", path)
+
   paste0("data:", mime, ";base64,", jsonlite::base64_enc(raw))
 }
 
-# Simple retry helper for 429/5xx with exponential backoff
+# Retry helper for 429/5xx
 perform_with_retry <- function(req, max_tries = 5){
-  delay <- 1
-  last <- NULL
+  delay <- 1; last <- NULL
   for (i in seq_len(max_tries)){
     resp <- tryCatch(req_perform(req), error = function(e) e)
     last <- resp
     if (inherits(resp, "httr2_response")){
       st <- resp_status(resp)
-      if (!st %in% c(429, 500:599)) return(resp) # success or non-retryable
-      ra <- resp_header(resp, "retry-after")
-      if (!is.null(ra)) delay <- suppressWarnings(as.numeric(ra))
+      if (!st %in% c(429, 500:599)) return(resp)
+      ra <- resp_header(resp, "retry-after"); if (!is.null(ra)) delay <- suppressWarnings(as.numeric(ra))
     }
-    Sys.sleep(delay)
-    delay <- min(delay * 2, 20)
+    Sys.sleep(delay); delay <- min(delay * 2, 20)
   }
   if (inherits(last, "httr2_response")) return(last)
   stop(last)
@@ -54,10 +58,15 @@ perform_with_retry <- function(req, max_tries = 5){
 `%||%` <- function(a,b) if (!is.null(a)) a else b
 
 extract_openai_events <- function(image_path, venue_name, year, month){
-  if (!nzchar(Sys.getenv("OPENAI_API_KEY"))) return(tibble())
-  if (throttle_sec > 0) Sys.sleep(throttle_sec)
+  key <- Sys.getenv("OPENAI_API_KEY")
+  if (!nzchar(key)) { message("[extract] no OPENAI_API_KEY → skip"); return(tibble()) }
 
+  # gentle throttle to avoid 429 (guarded)
+  if (!is.null(throttle_sec) && is.finite(throttle_sec) && throttle_sec > 0) Sys.sleep(throttle_sec)
+
+  message("[extract] start: ", image_path)
   img <- img_to_data_uri(image_path)
+  message("[extract] data_uri_len=", nchar(img))
 
   prompt <- glue(
 'Devuelve SOLO JSON minificado:
@@ -77,7 +86,7 @@ Reglas: usa month={month} y year={year} si el cartel solo muestra días. Ignora 
   )
 
   req <- request("https://api.openai.com/v1/responses") |>
-    req_headers(Authorization = paste("Bearer", Sys.getenv("OPENAI_API_KEY"))) |>
+    req_headers(Authorization = paste("Bearer", key)) |>
     req_body_json(body, auto_unbox = TRUE)
 
   resp <- perform_with_retry(req, max_tries = 5)
@@ -88,11 +97,12 @@ Reglas: usa month={month} y year={year} si el cartel solo muestra días. Ignora 
     return(tibble())
   }
 
-  resj <- resp_body_json(resp)
+  resj    <- resp_body_json(resp)
   out_txt <- resj$output_text %||% (tryCatch(resj$choices[[1]]$message$content[[1]]$text, error = function(e) NA))
-  if (is.na(out_txt)) return(tibble())
+  if (is.na(out_txt)) { message("[extract] empty output_text"); return(tibble()) }
+
   parsed <- tryCatch(jsonlite::fromJSON(out_txt, simplifyVector = TRUE), error=function(e) NULL)
-  if (is.null(parsed) || is.null(parsed$events)) return(tibble())
+  if (is.null(parsed) || is.null(parsed$events)) { message("[extract] JSON parse failed or no events"); return(tibble()) }
 
   tibble(
     venue        = parsed$venue %||% venue_name,
