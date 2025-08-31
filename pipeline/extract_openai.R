@@ -5,6 +5,9 @@ suppressPackageStartupMessages({
   library(glue)
 })
 
+# Extractor version banner (shows up in logs if this file is loaded)
+message("[extract_openai.R] v2025-08-31")
+
 # --- config via env (optional) ---
 openai_model <- Sys.getenv("OPENAI_MODEL", unset = "gpt-4o-mini")
 throttle_sec <- suppressWarnings(as.numeric(Sys.getenv("OPENAI_THROTTLE_SEC", unset = "2")))
