@@ -10,23 +10,21 @@ openai_model <- Sys.getenv("OPENAI_MODEL", unset = "gpt-4o-mini")
 throttle_sec <- suppressWarnings(as.numeric(Sys.getenv("OPENAI_THROTTLE_SEC", unset = "2")))
 if (is.na(throttle_sec)) throttle_sec <- 2
 
-# Safe base64 for local image files (handles unknown size)
+# Safe base64 for local image files (handles unknown/zero size)
 img_to_data_uri <- function(path){
   if (!file.exists(path)) stop("Image not found: ", path)
-  ext <- tolower(tools::file_ext(path))
+  ext  <- tolower(tools::file_ext(path))
   mime <- ifelse(ext %in% c("jpg","jpeg"), "image/jpeg", "image/png")
 
   size <- suppressWarnings(as.integer(file.info(path)$size))
-  raw <- NULL
   if (!is.na(size) && size > 0) {
     raw <- readBin(path, what = "raw", n = size)
   } else {
     message("Warning: unknown file size, streaming read: ", path)
     con <- file(path, "rb"); on.exit(close(con), add = TRUE)
-    raw <- readBin(con, what = "raw", n = 1e8) # up to 100MB
+    raw <- readBin(con, what = "raw", n = 1e8)  # up to 100MB
   }
   if (length(raw) == 0) stop("Zero-length image bytes for: ", path)
-
   paste0("data:", mime, ";base64,", jsonlite::base64_enc(raw))
 }
 
@@ -40,7 +38,6 @@ perform_with_retry <- function(req, max_tries = 5){
     if (inherits(resp, "httr2_response")){
       st <- resp_status(resp)
       if (!st %in% c(429, 500:599)) return(resp) # success or non-retryable
-      # retryable -> fall through
       ra <- resp_header(resp, "retry-after")
       if (!is.null(ra)) delay <- suppressWarnings(as.numeric(ra))
     }
@@ -55,8 +52,6 @@ perform_with_retry <- function(req, max_tries = 5){
 
 extract_openai_events <- function(image_path, venue_name, year, month){
   if (!nzchar(Sys.getenv("OPENAI_API_KEY"))) return(tibble())
-
-  # gentle throttle to avoid 429
   if (throttle_sec > 0) Sys.sleep(throttle_sec)
 
   img <- img_to_data_uri(image_path)
