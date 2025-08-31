@@ -5,7 +5,7 @@ suppressPackageStartupMessages({
   library(glue)
 })
 
-message("[extract_openai.R] v2025-08-31+diag2")
+message("[extract_openai.R] v2025-08-31+diag3")
 
 # --- config via env (optional) ---
 get_num <- function(x, fallback) {
@@ -75,16 +75,18 @@ Reglas: usa month={month} y year={year} si el cartel solo muestra días. Ignora 
 
   body <- list(
     model = openai_model,
-    input = list(list(
-      role = "user",
-      content = list(
-        list(type = "input_text",  text = prompt),
-        list(type = "input_image", image_url = img)
+    input = list(
+      list(
+        role = "user",
+        content = list(
+          list(type = "input_text",  text = prompt),
+          list(type = "input_image", image_url = img)
+        )
       )
-    )))
+    )
   )
 
-  # DIAG: pre-serialize JSON to avoid any edge-case in req_body_json
+  # Pre-serialize JSON to avoid any edge-case in req_body_json
   payload <- NULL
   tryCatch({
     payload <- jsonlite::toJSON(body, auto_unbox = TRUE, null = "null", always_decimal = FALSE)
@@ -95,9 +97,11 @@ Reglas: usa month={month} y year={year} si el cartel solo muestra días. Ignora 
 
   # Build & send request
   req <- request("https://api.openai.com/v1/responses") |>
-    req_headers(Authorization = paste("Bearer", key),
-                "Content-Type" = "application/json") |>
-    req_body_raw(payload)
+    req_headers(
+      Authorization = paste("Bearer", key),
+      "Content-Type" = "application/json"
+    ) |>
+    req_body_raw(charToRaw(payload))
 
   resp <- perform_with_retry(req, max_tries = 5)
 
