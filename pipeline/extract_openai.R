@@ -6,39 +6,49 @@ suppressPackageStartupMessages({
 })
 
 # --- config via env (optional) ---
-# You can override these by adding repo secrets and exporting them.
-openai_model <- Sys.getenv("OPENAI_MODEL", unset = "gpt-4o-mini")   # safer limits than gpt-4o
-throttle_sec <- as.numeric(Sys.getenv("OPENAI_THROTTLE_SEC", unset = "2"))  # gap between calls
+openai_model <- Sys.getenv("OPENAI_MODEL", unset = "gpt-4o-mini")
+throttle_sec <- suppressWarnings(as.numeric(Sys.getenv("OPENAI_THROTTLE_SEC", unset = "2")))
+if (is.na(throttle_sec)) throttle_sec <- 2
 
+# Safe base64 for local image files (handles unknown size)
 img_to_data_uri <- function(path){
+  if (!file.exists(path)) stop("Image not found: ", path)
   ext <- tolower(tools::file_ext(path))
   mime <- ifelse(ext %in% c("jpg","jpeg"), "image/jpeg", "image/png")
-  raw <- readBin(path, what = "raw", n = file.info(path)$size)
+
+  size <- suppressWarnings(as.integer(file.info(path)$size))
+  raw <- NULL
+  if (!is.na(size) && size > 0) {
+    raw <- readBin(path, what = "raw", n = size)
+  } else {
+    message("Warning: unknown file size, streaming read: ", path)
+    con <- file(path, "rb"); on.exit(close(con), add = TRUE)
+    raw <- readBin(con, what = "raw", n = 1e8) # up to 100MB
+  }
+  if (length(raw) == 0) stop("Zero-length image bytes for: ", path)
+
   paste0("data:", mime, ";base64,", jsonlite::base64_enc(raw))
 }
 
 # Simple retry helper for 429/5xx with exponential backoff
 perform_with_retry <- function(req, max_tries = 5){
   delay <- 1
+  last <- NULL
   for (i in seq_len(max_tries)){
     resp <- tryCatch(req_perform(req), error = function(e) e)
-    # If it's a response, check status; if error obj, treat as transient
+    last <- resp
     if (inherits(resp, "httr2_response")){
-      status <- resp_status(resp)
-      if (!status %in% c(429, 500:599)) return(resp)
-      # transient -> fall through to retry
-    }
-    # Honor Retry-After if present
-    if (inherits(resp, "httr2_response")){
+      st <- resp_status(resp)
+      if (!st %in% c(429, 500:599)) return(resp) # success or non-retryable
+      # retryable -> fall through
       ra <- resp_header(resp, "retry-after")
-      if (!is.null(ra)) delay <- as.numeric(ra)
+      if (!is.null(ra)) delay <- suppressWarnings(as.numeric(ra))
     }
     Sys.sleep(delay)
     delay <- min(delay * 2, 20)
   }
-  # last attempt (return whatever we got)
-  if (!inherits(resp, "httr2_response")) stop(resp)
-  resp
+  if (inherits(last, "httr2_response")) return(last)
+  stop(last)
 }
 
 `%||%` <- function(a,b) if (!is.null(a)) a else b
@@ -74,7 +84,6 @@ Reglas: usa month={month} y year={year} si el cartel solo muestra días. Ignora 
 
   resp <- perform_with_retry(req, max_tries = 5)
 
-  # If still non-2xx, print body for clarity and return empty tibble
   if (resp_status(resp) >= 300){
     msg <- tryCatch(resp_body_string(resp), error = function(e) paste("status", resp_status(resp)))
     message("OpenAI error for ", image_path, ": ", msg)
