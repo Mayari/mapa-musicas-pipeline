@@ -4,8 +4,10 @@ suppressPackageStartupMessages({
   library(lubridate)
 })
 
-month_names <- c("enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","setiembre","octubre","noviembre","diciembre")
-month_map <- setNames(1:12, month_names)
+month_map <- c(
+  "enero"=1, "febrero"=2, "marzo"=3, "abril"=4, "mayo"=5, "junio"=6, "julio"=7,
+  "agosto"=8, "septiembre"=9, "octubre"=10, "noviembre"=11, "diciembre"=12
+)
 
 parse_poster_events <- function(df){
   if (!nrow(df)) return(tibble())
