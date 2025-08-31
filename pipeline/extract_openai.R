@@ -5,7 +5,7 @@ suppressPackageStartupMessages({
   library(glue)
 })
 
-message("[extract_openai.R] v2025-08-31+diag")
+message("[extract_openai.R] v2025-08-31+diag2")
 
 # --- config via env (optional) ---
 get_num <- function(x, fallback) {
@@ -34,7 +34,6 @@ img_to_data_uri <- function(path){
     raw <- readBin(con, what = "raw", n = 1e8)  # up to 100MB
   }
   if (length(raw) == 0) stop("Zero-length image bytes for: ", path)
-
   paste0("data:", mime, ";base64,", jsonlite::base64_enc(raw))
 }
 
@@ -61,7 +60,7 @@ extract_openai_events <- function(image_path, venue_name, year, month){
   key <- Sys.getenv("OPENAI_API_KEY")
   if (!nzchar(key)) { message("[extract] no OPENAI_API_KEY → skip"); return(tibble()) }
 
-  # gentle throttle to avoid 429 (guarded)
+  # gentle throttle to avoid 429
   if (!is.null(throttle_sec) && is.finite(throttle_sec) && throttle_sec > 0) Sys.sleep(throttle_sec)
 
   message("[extract] start: ", image_path)
@@ -82,17 +81,33 @@ Reglas: usa month={month} y year={year} si el cartel solo muestra días. Ignora 
         list(type = "input_text",  text = prompt),
         list(type = "input_image", image_url = img)
       )
-    ))
+    )))
   )
 
+  # DIAG: pre-serialize JSON to avoid any edge-case in req_body_json
+  payload <- NULL
+  tryCatch({
+    payload <- jsonlite::toJSON(body, auto_unbox = TRUE, null = "null", always_decimal = FALSE)
+    message("[extract] payload_len=", nchar(payload))
+  }, error = function(e){
+    stop("JSON serialize failed: ", e$message)
+  })
+
+  # Build & send request
   req <- request("https://api.openai.com/v1/responses") |>
-    req_headers(Authorization = paste("Bearer", key)) |>
-    req_body_json(body, auto_unbox = TRUE)
+    req_headers(Authorization = paste("Bearer", key),
+                "Content-Type" = "application/json") |>
+    req_body_raw(payload)
 
   resp <- perform_with_retry(req, max_tries = 5)
 
-  if (resp_status(resp) >= 300){
-    msg <- tryCatch(resp_body_string(resp), error = function(e) paste("status", resp_status(resp)))
+  if (!inherits(resp, "httr2_response")){
+    stop("HT error (no response object): ", conditionMessage(resp))
+  }
+
+  st <- resp_status(resp); message("[extract] http_status=", st)
+  if (st >= 300){
+    msg <- tryCatch(resp_body_string(resp), error = function(e) paste("status", st))
     message("OpenAI error for ", image_path, ": ", msg)
     return(tibble())
   }
