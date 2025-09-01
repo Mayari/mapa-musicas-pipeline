@@ -1,15 +1,22 @@
-suppressPackageStartupMessages({ library(tidyverse) })
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(lubridate)
+})
 
+source("pipeline/constants.R")
+
+# Keep the most recent copy of each (venue, date, band) row.
 validate_events <- function(df){
   if (!nrow(df)) return(df)
-  df |>
+
+  clean <- df %>%
     mutate(
-      band_name = stringr::str_squish(band_name),
-      confidence = dplyr::case_when(
-        is.na(event_date) ~ 0.2,
-        nchar(band_name) < 3 ~ 0.3,
-        TRUE ~ if_else(source == "openai", 0.9, 0.6)
-      )
-    ) |>
-    distinct(venue, event_date, band_name, .keep_all = TRUE)
+      venue_key = norm_venue_key(venue),
+      band_key  = tolower(band_name) %>% iconv(from = "", to = "ASCII//TRANSLIT")
+    ) %>%
+    arrange(source) %>%               # stable but arbitrary; tweak if you add confidences
+    distinct(venue_key, event_date, band_key, .keep_all = TRUE) %>%
+    select(-venue_key, -band_key)
+
+  clean
 }
