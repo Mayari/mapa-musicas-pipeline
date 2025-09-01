@@ -5,7 +5,7 @@ suppressPackageStartupMessages({
   library(glue)
 })
 
-message("[extract_openai.R] v2025-08-31+rugged-fallbacks")
+message("[extract_openai.R] v2025-08-31+rugged-fallbacks2")
 
 # ---------- config ----------
 get_num <- function(x, fallback) {
@@ -13,7 +13,13 @@ get_num <- function(x, fallback) {
   if (is.null(v) || length(v) == 0 || is.na(v) || !is.finite(v)) return(fallback)
   v
 }
-default_model <- Sys.getenv("OPENAI_MODEL", unset = "gpt-4.1")  # you control via secret
+sanitize_model <- function(x){
+  x <- Sys.getenv(x, unset = "gpt-4.1")
+  x <- trimws(x)
+  x <- gsub('^"+|"+$', "", x)
+  x
+}
+default_model <- sanitize_model("OPENAI_MODEL")
 throttle_sec  <- get_num("OPENAI_THROTTLE_SEC", 2)
 
 `%||%` <- function(a,b) if (!is.null(a)) a else b
@@ -31,19 +37,33 @@ img_to_data_uri <- function(path){
   paste0("data:", mime, ";base64,", jsonlite::base64_enc(raw))
 }
 
-# Return an httr2_response even when httr2 throws on 4xx
-perform_safely <- function(req){
-  obj <- tryCatch(req_perform(req), error = function(e) e)
-  if (inherits(obj, "httr2_response")) return(obj)
-  # httr2_http_error usually has $response
-  resp <- tryCatch(obj$response, error=function(e) NULL)
-  if (inherits(resp, "httr2_response")) return(resp)
-  stop(obj)
-}
-
 should_retry_without_schema <- function(body_txt){
   if (is.null(body_txt) || !nzchar(body_txt)) return(FALSE)
   grepl("json_schema|response_format|schema.*not.*supported|invalid.*response_format", tolower(body_txt))
+}
+
+# helper: perform req, always return a list(status, body, json) or NULL on build failure
+do_req <- function(req){
+  obj <- tryCatch(req_perform(req), error = function(e) e)
+  # If we got a response object (success OR http error), normalize it
+  resp <- NULL
+  if (inherits(obj, "httr2_response")) {
+    resp <- obj
+  } else {
+    # httr2_http_error typically has $response
+    resp <- tryCatch(obj$response, error=function(e) NULL)
+    if (is.null(resp)) {
+      # no usable response, return a synthetic error signal
+      return(list(status = NA_integer_, body = paste("transport/build error:", conditionMessage(obj)), json = NULL))
+    }
+  }
+  st <- resp_status(resp)
+  body_txt <- tryCatch(resp_body_string(resp), error=function(e) "")
+  js <- NULL
+  if (st < 300) {
+    js <- tryCatch(jsonlite::fromJSON(body_txt, simplifyVector = FALSE), error=function(e) NULL)
+  }
+  list(status = st, body = body_txt, json = js)
 }
 
 # ---------- main extractor ----------
@@ -53,10 +73,10 @@ extract_openai_events <- function(image_path, venue_name, year, month){
 
   img <- img_to_data_uri(image_path)
 
-  sys <- "Eres un extractor. Responde SOLO con JSON válido que cumpla el formato pedido."
+  sys <- "Eres un extractor. Responde SOLO con JSON válido en el formato pedido."
   rules <- glue(
 "- 'band' es el artista/banda (no títulos genéricos como 'Miércoles de Salsa', 'Valentine's Jazz Day', 'Jam', etc. Esos van en 'event_title').
-- Expande residencias: 'cada martes' / 'todos los miércoles' => un evento por CADA fecha de ese día en {month}/{year}.
+- Expande residencias: 'cada martes' / 'todos los miércoles' => un evento por CADA fecha en {sprintf('%02d/%04d', month, year)}.
 - Si hay varios grupos y días (p.ej. 'A: 7 y 21 / B: 14 y 28'), asigna correctamente.
 - Hora: detecta '8 pm', '20:30', '20 h', '20 hrs', '20:30h'. Devuelve HH:MM 24h si hay; si no, omite 'time'.
 - Ignora precios/reservas/patrocinios."
@@ -106,52 +126,46 @@ Reglas:
       temperature = 0,
       max_tokens = 1200
     )
-    if (use_schema) {
-      base$response_format <- list(
-        type = "json_schema",
-        json_schema = list(name="EventsSchema", schema=schema, strict=TRUE)
-      )
+    base$response_format <- if (use_schema) {
+      list(type = "json_schema",
+           json_schema = list(name="EventsSchema", schema=schema, strict=TRUE))
     } else {
-      base$response_format <- list(type="json_object")
+      list(type = "json_object")
     }
     base
   }
 
-  # Try sequence:
-  # 1) chat + schema (model = default_model)
-  # 2) chat + json_object (same model)
-  # 3) chat + json_object (fallback model gpt-4o)
-  # 4) responses API (fallback model gpt-4o)
-  try_modes <- tibble::tibble(
-    api = c("chat","chat","chat","responses"),
+  attempts <- tibble::tibble(
+    api   = c("chat", "chat", "chat", "responses"),
     model = c(default_model, default_model, "gpt-4o", "gpt-4o"),
     use_schema = c(TRUE, FALSE, FALSE, FALSE)
   )
 
-  for (k in seq_len(nrow(try_modes))){
-    api   <- try_modes$api[k]
-    model <- try_modes$model[k]
-    use_schema <- try_modes$use_schema[k]
+  for (k in seq_len(nrow(attempts))){
+    api   <- attempts$api[k]
+    model <- attempts$model[k]
+    use_schema <- attempts$use_schema[k]
 
     message(sprintf("[extract] try #%d api=%s model=%s schema=%s", k, api, model, use_schema))
 
-    if (api == "chat") {
-      body <- build_chat_body(model, use_schema = use_schema)
+    if (api == "chat"){
+      body <- build_chat_body(model, use_schema)
       req <- request("https://api.openai.com/v1/chat/completions") |>
         req_headers(Authorization = paste("Bearer", key), "Content-Type" = "application/json") |>
         req_body_json(body, auto_unbox = TRUE)
-      resp <- perform_safely(req)
-      st   <- resp_status(resp); message("[extract] http_status=", st)
-      if (st >= 300){
-        bt <- tryCatch(resp_body_string(resp), error=function(e) "")
-        message("[extract] 4xx/5xx body: ", substr(bt, 1, 600))
-        # If schema seems unsupported, fall back to json_object
-        if (use_schema && should_retry_without_schema(bt)) next
-        # Otherwise continue to next mode
+
+      res <- do_req(req)
+      if (is.null(res)) { message("[extract] build/transport error (no response)"); next }
+      message("[extract] http_status=", res$status)
+      if (res$status >= 300){
+        # show part of the body and decide if we should drop schema
+        message("[extract] 4xx/5xx body: ", substr(res$body, 1, 600))
+        if (use_schema && should_retry_without_schema(res$body)) next
         next
       }
-      res <- resp_body_json(resp)
-      out_txt <- tryCatch(res$choices[[1]]$message$content, error=function(e) NA_character_)
+
+      # success path: parse JSON content
+      out_txt <- tryCatch(res$json$choices[[1]]$message$content, error=function(e) NA_character_)
       if (is.null(out_txt) || length(out_txt)==0 || is.na(out_txt) || !nzchar(out_txt)) { next }
       parsed <- tryCatch(jsonlite::fromJSON(out_txt, simplifyVector = TRUE), error=function(e) NULL)
       if (is.null(parsed) || is.null(parsed$events)) { next }
@@ -169,8 +183,7 @@ Reglas:
       if (nrow(tib)) return(tib) else next
     }
 
-    if (api == "responses") {
-      # Responses API fallback (image+text)
+    if (api == "responses"){
       prompt <- glue(
 'Devuelve SOLO JSON minificado con este esquema:
 {{"venue":"{venue_name}","year":{year},"month":{month},"events":[{{"date":"YYYY-MM-DD","band":"<artista>","event_title":"<opcional>","time":"HH:MM"}}]}}
@@ -190,15 +203,16 @@ Reglas:
       req <- request("https://api.openai.com/v1/responses") |>
         req_headers(Authorization = paste("Bearer", key), "Content-Type" = "application/json") |>
         req_body_json(body, auto_unbox = TRUE)
-      resp <- perform_safely(req)
-      st   <- resp_status(resp); message("[extract] http_status=", st)
-      if (st >= 300){
-        bt <- tryCatch(resp_body_string(resp), error=function(e) "")
-        message("[extract] 4xx/5xx body: ", substr(bt, 1, 600))
+
+      res <- do_req(req)
+      if (is.null(res)) { message("[extract] build/transport error (no response)"); next }
+      message("[extract] http_status=", res$status)
+      if (res$status >= 300){
+        message("[extract] 4xx/5xx body: ", substr(res$body, 1, 600))
         next
       }
-      res    <- resp_body_json(resp)
-      out_txt <- res$output_text %||% (tryCatch(res$choices[[1]]$message$content[[1]]$text, error = function(e) NA_character_))
+
+      out_txt <- res$json$output_text %||% (tryCatch(res$json$choices[[1]]$message$content[[1]]$text, error=function(e) NA_character_))
       if (is.null(out_txt) || length(out_txt)==0 || is.na(out_txt) || !nzchar(out_txt)) { next }
       parsed <- tryCatch(jsonlite::fromJSON(out_txt, simplifyVector = TRUE), error=function(e) NULL)
       if (is.null(parsed) || is.null(parsed$events)) { next }
@@ -215,8 +229,7 @@ Reglas:
       ) |> dplyr::filter(!is.na(event_date), nzchar(band_name))
       if (nrow(tib)) return(tib) else next
     }
-  } # for
+  }
 
-  # If all attempts returned nothing, return empty tibble
   tibble()
 }
