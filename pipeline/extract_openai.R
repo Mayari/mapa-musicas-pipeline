@@ -5,7 +5,7 @@ suppressPackageStartupMessages({
   library(glue)
 })
 
-message("[extract_openai.R] v2025-08-31+diag3")
+message("[extract_openai.R] v2025-08-31+diag4")
 
 # --- config via env (optional) ---
 get_num <- function(x, fallback) {
@@ -56,6 +56,29 @@ perform_with_retry <- function(req, max_tries = 5){
 
 `%||%` <- function(a,b) if (!is.null(a)) a else b
 
+get_output_text <- function(resj){
+  # Prefer top-level output_text (Responses API)
+  if (!is.null(resj$output_text) && length(resj$output_text) >= 1 &&
+      is.character(resj$output_text) && nzchar(resj$output_text[1])) {
+    return(resj$output_text[1])
+  }
+  # Fallback to choices[].message.content[].text
+  ch <- tryCatch(resj$choices, error=function(e) NULL)
+  if (!is.null(ch) && length(ch) >= 1){
+    msg <- tryCatch(ch[[1]]$message, error=function(e) NULL)
+    if (!is.null(msg) && !is.null(msg$content) && length(msg$content) >= 1){
+      for (i in seq_along(msg$content)){
+        it <- msg$content[[i]]
+        if (is.list(it) && !is.null(it$text) &&
+            is.character(it$text) && length(it$text) >= 1 && nzchar(it$text[1])) {
+          return(it$text[1])
+        }
+      }
+    }
+  }
+  return(NA_character_)
+}
+
 extract_openai_events <- function(image_path, venue_name, year, month){
   key <- Sys.getenv("OPENAI_API_KEY")
   if (!nzchar(key)) { message("[extract] no OPENAI_API_KEY → skip"); return(tibble()) }
@@ -87,13 +110,8 @@ Reglas: usa month={month} y year={year} si el cartel solo muestra días. Ignora 
   )
 
   # Pre-serialize JSON to avoid any edge-case in req_body_json
-  payload <- NULL
-  tryCatch({
-    payload <- jsonlite::toJSON(body, auto_unbox = TRUE, null = "null", always_decimal = FALSE)
-    message("[extract] payload_len=", nchar(payload))
-  }, error = function(e){
-    stop("JSON serialize failed: ", e$message)
-  })
+  payload <- jsonlite::toJSON(body, auto_unbox = TRUE, null = "null", always_decimal = FALSE)
+  message("[extract] payload_len=", nchar(payload))
 
   # Build & send request
   req <- request("https://api.openai.com/v1/responses") |>
@@ -106,7 +124,7 @@ Reglas: usa month={month} y year={year} si el cartel solo muestra días. Ignora 
   resp <- perform_with_retry(req, max_tries = 5)
 
   if (!inherits(resp, "httr2_response")){
-    stop("HT error (no response object): ", conditionMessage(resp))
+    stop("HT error (no response object)")
   }
 
   st <- resp_status(resp); message("[extract] http_status=", st)
@@ -117,11 +135,19 @@ Reglas: usa month={month} y year={year} si el cartel solo muestra días. Ignora 
   }
 
   resj    <- resp_body_json(resp)
-  out_txt <- resj$output_text %||% (tryCatch(resj$choices[[1]]$message$content[[1]]$text, error = function(e) NA))
-  if (is.na(out_txt)) { message("[extract] empty output_text"); return(tibble()) }
+  out_txt <- get_output_text(resj)
+
+  # SAFER: handle zero-length output
+  if (is.null(out_txt) || length(out_txt) == 0 || is.na(out_txt) || !nzchar(out_txt)) {
+    message("[extract] empty output_text")
+    return(tibble())
+  }
 
   parsed <- tryCatch(jsonlite::fromJSON(out_txt, simplifyVector = TRUE), error=function(e) NULL)
-  if (is.null(parsed) || is.null(parsed$events)) { message("[extract] JSON parse failed or no events"); return(tibble()) }
+  if (is.null(parsed) || is.null(parsed$events)) {
+    message("[extract] JSON parse failed or no events")
+    return(tibble())
+  }
 
   tibble(
     venue        = parsed$venue %||% venue_name,
