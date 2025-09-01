@@ -1,77 +1,86 @@
-venue,venue_id,event_date,band_name,source,source_image,confidence
-jazzatlan cholula,NA,2024-01-11,Silky,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,0.9
-jazzatlan cholula,NA,2024-01-12,Ricardo Arenas Trío,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,0.9
-jazzatlan cholula,NA,2024-01-13,Lengua Gitana,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,0.9
-jazzatlan cholula,NA,2024-01-14,Tesauro Trío,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,0.9
-jazzatlan cholula,NA,2024-01-18,The Mother Tongue,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,0.9
-jazzatlan cholula,NA,2024-01-19,Los Músicos de José,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,0.9
-jazzatlan cholula,NA,2024-01-20,Talaverita de Toledo,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,0.9
-jazzatlan cholula,NA,2024-01-21,Ramones Gopal,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,0.9
-jazzatlan cholula,NA,2024-01-25,Cóyotl Trío,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,0.9
-jazzatlan cholula,NA,2024-01-26,Aerofon,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,0.9
-jazzatlan cholula,NA,2024-01-27,El Comité del Funk,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,0.9
-jazzatlan cholula,NA,2024-01-28,Samuel Piña Dueto,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,0.9
-mendrugo,NA,2024-04-06,Voz y Piano,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,0.9
-mendrugo,NA,2024-04-13,Ale Fernández,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,0.9
-mendrugo,NA,2024-04-20,Ale Fernández,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,0.9
-mendrugo,NA,2024-04-27,Gustavo Cruz,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,0.9
-mendrugo,NA,2024-04-06,Crossroads,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,0.9
-mendrugo,NA,2024-04-13,Quattro Cuarteto de Cuerdas,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,0.9
-mendrugo,NA,2024-04-20,Carlos Falfán,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,0.9
-mendrugo,NA,2024-04-27,MadHat,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,0.9
-mendrugo,NA,2024-04-07,Abel Quiroz,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,0.9
-mendrugo,NA,2024-04-14,Abel Quiroz,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,0.9
-mendrugo,NA,2024-04-21,Abel Quiroz,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,0.9
-mendrugo,NA,2024-04-28,Abel Quiroz,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,0.9
-mendrugo,NA,2024-04-04,Croon4You,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,0.9
-mendrugo,NA,2024-04-11,Concierto de Conciertos,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,0.9
-mendrugo,NA,2024-04-18,Salvador Beltrán & Ma. Cuspinera,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,0.9
-mendrugo,NA,2024-04-25,Abel Quiroz & Mauricio Arroniz,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,0.9
-mendrugo,NA,2024-04-05,Evil Ways,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,0.9
-mendrugo,NA,2024-04-12,The Jockers Blues Band,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,0.9
-mendrugo,NA,2024-04-19,Erick Astorga,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,0.9
-mendrugo,NA,2024-04-26,Jazzatlán Big Band ft. Jimena Oropeza,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,0.9
-mendrugo,NA,2024-02-01,Gustavo Cruz,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,0.9
-mendrugo,NA,2024-02-08,Gersam Nochebuena,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,0.9
-mendrugo,NA,2024-02-15,Esmeralda Guillén,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,0.9
-mendrugo,NA,2024-02-22,Aarón Tapia,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,0.9
-mendrugo,NA,2024-02-29,Salvador Beltrán,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,0.9
-mendrugo,NA,2024-02-02,W Blues,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,0.9
-mendrugo,NA,2024-02-09,Ricardo Arenas Project,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,0.9
-mendrugo,NA,2024-02-16,Lengua Gitana,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,0.9
-mendrugo,NA,2024-02-23,Wiso & Los Prófugos del Silencio,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,0.9
-mendrugo,NA,2024-02-10,Gustavo Cruz,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,0.9
-mendrugo,NA,2024-02-17,Ale Fernández,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,0.9
-mendrugo,NA,2024-02-24,Gustavo Cruz,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,0.9
-mendrugo,NA,2024-02-03,JOR-DU JAZZ TRÍO,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,0.9
-mendrugo,NA,2024-02-10,ALDANA,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,0.9
-mendrugo,NA,2024-02-17,JAZZ TRÍO,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,0.9
-mendrugo,NA,2024-02-24,JAZZATLÁN BIG BAND,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,0.9
-mendrugo,NA,2024-02-04,ABEL QUIROZ,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,0.9
-mendrugo,NA,2024-02-11,ABEL QUIROZ,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,0.9
-mendrugo,NA,2024-02-18,ABEL QUIROZ,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,0.9
-mendrugo,NA,2024-02-25,ABEL QUIROZ,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,0.9
-mendrugo,NA,2024-03-07,Sandy Chavez y Abel Quitoz,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,0.9
-mendrugo,NA,2024-03-14,Esmeralda Guillen,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,0.9
-mendrugo,NA,2024-03-21,Salvador Beltran,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,0.9
-mendrugo,NA,2024-03-28,Jorge Coyotl,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,0.9
-mendrugo,NA,2024-03-01,Time Travel Band,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,0.9
-mendrugo,NA,2024-03-08,Sergio Sernez,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,0.9
-mendrugo,NA,2024-03-15,Croon 4 You,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,0.9
-mendrugo,NA,2024-03-22,The Jockers,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,0.9
-mendrugo,NA,2024-03-29,Mr. Rabbit,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,0.9
-mendrugo,NA,2024-03-02,Ale Fernandez,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,0.9
-mendrugo,NA,2024-03-09,Dos Tonos,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,0.9
-mendrugo,NA,2024-03-16,Ivan Tenorio y Dafne Torsae,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,0.9
-mendrugo,NA,2024-03-30,Ale Fernandez,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,0.9
-mendrugo,NA,2024-03-30,Abel Quiroz,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,0.9
-mendrugo,NA,2024-03-02,Samuel Piña Trío,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,0.9
-mendrugo,NA,2024-03-09,Ale Fernandez,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,0.9
-mendrugo,NA,2024-03-16,Mayarí Montes de Oca Trío,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,0.9
-mendrugo,NA,2024-03-23,The Evil Ways,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,0.9
-mendrugo,NA,2024-03-30,Terzzeto Parian,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,0.9
-mendrugo,NA,2024-03-03,Abel Quiroz,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,0.9
-mendrugo,NA,2024-03-10,Abel Quiroz,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,0.9
-mendrugo,NA,2024-03-17,Abel Quiroz,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,0.9
-mendrugo,NA,2024-03-24,Abel Quiroz,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,0.9
-mendrugo,NA,2024-03-31,Abel Quiroz,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,0.9
+venue,venue_id,event_date,band_name,event_time,source,source_image,weekday
+jazzatlan cholula,NA,2024-02-06,Martes de Jam,21:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,martes
+jazzatlan cholula,NA,2024-02-13,Martes de Jam,21:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,martes
+jazzatlan cholula,NA,2024-02-20,Martes de Jam,21:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,martes
+jazzatlan cholula,NA,2024-02-27,Martes de Jam,21:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,martes
+jazzatlan cholula,NA,2024-02-07,Soneros Son,20:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,miércoles
+jazzatlan cholula,NA,2024-02-14,Orquesta Infrarroja,20:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,miércoles
+jazzatlan cholula,NA,2024-02-03,Cuarteto Yacon,21:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,sábado
+jazzatlan cholula,NA,2024-02-04,Mr. Rabbit,18:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,domingo
+jazzatlan cholula,NA,2024-02-08,Wiso Castillo Cuarteto,21:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,jueves
+jazzatlan cholula,NA,2024-02-09,Eray Farrera Quartet,21:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,viernes
+jazzatlan cholula,NA,2024-02-10,Fer Ruvel Funk Night,21:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,sábado
+jazzatlan cholula,NA,2024-02-11,Cóyotl Trio,19:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,domingo
+jazzatlan cholula,NA,2024-02-14,Valentine's Jazz Day,20:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,miércoles
+jazzatlan cholula,NA,2024-02-15,Pablo Loaiza Jazz Funk Quartet,21:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,jueves
+jazzatlan cholula,NA,2024-02-16,El Comité del Funk,21:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,viernes
+jazzatlan cholula,NA,2024-02-17,Talaverita de Toledo,19:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,sábado
+jazzatlan cholula,NA,2024-02-18,Tesauro Trio,18:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,domingo
+jazzatlan cholula,NA,2024-02-22,Tolztoi,21:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,jueves
+jazzatlan cholula,NA,2024-02-23,Jerry Montana Funky Party,21:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,viernes
+jazzatlan cholula,NA,2024-02-24,Emmanuel Chopis Quartet,21:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,sábado
+jazzatlan cholula,NA,2024-02-25,JC Blues,18:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,domingo
+jazzatlan cholula,NA,2024-02-29,Silky,21:00,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,jueves
+mendrugo,NA,2024-04-06,VOZ Y PIANO,14:30,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,sábado
+mendrugo,NA,2024-04-13,ALE FERNÁNDEZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,sábado
+mendrugo,NA,2024-04-20,ALE FERNÁNDEZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,sábado
+mendrugo,NA,2024-04-27,GUSTAVO CRUZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,sábado
+mendrugo,NA,2024-04-06,CROSSROADS,21:00,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,sábado
+mendrugo,NA,2024-04-13,QUATTRO CUARTETO DE CUERDAS,21:00,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,sábado
+mendrugo,NA,2024-04-20,CARLOS FALFÁN,21:00,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,sábado
+mendrugo,NA,2024-04-27,MadHat,21:00,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,sábado
+mendrugo,NA,2024-04-07,ABEL QUIROZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,domingo
+mendrugo,NA,2024-04-14,ABEL QUIROZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,domingo
+mendrugo,NA,2024-04-21,ABEL QUIROZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,domingo
+mendrugo,NA,2024-04-28,ABEL QUIROZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,domingo
+mendrugo,NA,2024-04-04,Croon4You,21:00,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,jueves
+mendrugo,NA,2024-04-11,Concierto de Conciertos,21:00,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,jueves
+mendrugo,NA,2024-04-18,Salvador Beltrán & Ma. Cuspinera,21:00,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,jueves
+mendrugo,NA,2024-04-25,Abel Quiroz & Mauricio Arroniz,21:00,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,jueves
+mendrugo,NA,2024-04-05,Evil Ways,21:00,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,viernes
+mendrugo,NA,2024-04-12,The Jockers Blues Band,21:00,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,viernes
+mendrugo,NA,2024-04-19,Erick Astorga,21:00,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,viernes
+mendrugo,NA,2024-04-26,Jazzatlán Big Band ft. Jimena Oropeza,21:00,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,viernes
+mendrugo,NA,2024-02-01,Gustavo Cruz,21:00,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,jueves
+mendrugo,NA,2024-02-08,Gersam Nochebuena,21:00,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,jueves
+mendrugo,NA,2024-02-15,Esmeralda Guillén,21:00,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,jueves
+mendrugo,NA,2024-02-22,Aarón Tapia,21:00,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,jueves
+mendrugo,NA,2024-02-29,Salvador Beltrán,21:00,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,jueves
+mendrugo,NA,2024-02-02,W Blues,21:00,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,viernes
+mendrugo,NA,2024-02-09,Ricardo Arenas Project,21:00,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,viernes
+mendrugo,NA,2024-02-16,Lengua Gitana,21:00,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,viernes
+mendrugo,NA,2024-02-23,Wiso & Los Prófugos del Silencio,21:00,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,viernes
+mendrugo,NA,2024-02-10,Gustavo Cruz,10:30,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,sábado
+mendrugo,NA,2024-02-17,Ale Fernández,10:30,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,sábado
+mendrugo,NA,2024-02-24,Gustavo Cruz,10:30,openai,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,sábado
+mendrugo,NA,2024-02-03,JOR-DU JAZZ TRÍO,21:00,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,sábado
+mendrugo,NA,2024-02-10,ALDANA,21:00,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,sábado
+mendrugo,NA,2024-02-17,JAZZ TRÍO,21:00,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,sábado
+mendrugo,NA,2024-02-24,JAZZATLÁN BIG BAND,21:00,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,sábado
+mendrugo,NA,2024-02-04,ABEL QUIROZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,domingo
+mendrugo,NA,2024-02-11,ABEL QUIROZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,domingo
+mendrugo,NA,2024-02-18,ABEL QUIROZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,domingo
+mendrugo,NA,2024-02-25,ABEL QUIROZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,domingo
+mendrugo,NA,2024-03-07,SANDY CHAVEZ Y ABEL QUITOZ,21:00,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,jueves
+mendrugo,NA,2024-03-14,ESMERALDA GUILLEN,21:00,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,jueves
+mendrugo,NA,2024-03-21,SALVADOR BELTRAN,21:00,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,jueves
+mendrugo,NA,2024-03-28,JORGE COYOTL,21:00,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,jueves
+mendrugo,NA,2024-03-01,TIME TRAVEL BAND,21:00,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,viernes
+mendrugo,NA,2024-03-08,SERGIO SERNEZ,21:00,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,viernes
+mendrugo,NA,2024-03-15,CROON 4 YOU,21:00,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,viernes
+mendrugo,NA,2024-03-22,THE JOCKERS,21:00,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,viernes
+mendrugo,NA,2024-03-29,MR. RABBIT,21:00,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,viernes
+mendrugo,NA,2024-03-02,ALE FERNANDEZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,sábado
+mendrugo,NA,2024-03-09,DOS TONOS,10:30,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,sábado
+mendrugo,NA,2024-03-16,IVAN TENORIO Y DAFNE TORSAE,10:30,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,sábado
+mendrugo,NA,2024-03-30,ALE FERNANDEZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,sábado
+mendrugo,NA,2024-03-02,SAMUEL PIÑA TRÍO,21:00,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,sábado
+mendrugo,NA,2024-03-09,ALE FERNANDEZ,21:00,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,sábado
+mendrugo,NA,2024-03-16,MAYARÍ MONTES DE OCA TRÍO,21:00,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,sábado
+mendrugo,NA,2024-03-23,THE EVIL WAYS,21:00,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,sábado
+mendrugo,NA,2024-03-30,TERZZETO PARIAN,21:00,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,sábado
+mendrugo,NA,2024-03-03,ABEL QUIROZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,domingo
+mendrugo,NA,2024-03-10,ABEL QUIROZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,domingo
+mendrugo,NA,2024-03-17,ABEL QUIROZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,domingo
+mendrugo,NA,2024-03-24,ABEL QUIROZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,domingo
+mendrugo,NA,2024-03-31,ABEL QUIROZ,10:30,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,domingo
