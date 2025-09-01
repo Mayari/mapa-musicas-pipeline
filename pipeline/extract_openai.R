@@ -5,7 +5,7 @@ suppressPackageStartupMessages({
   library(glue)
 })
 
-message("[extract_openai.R] v2025-08-31+rugged-fallbacks2")
+message("[extract_openai.R] v2025-08-31+rugged-fallbacks3")
 
 # ---------- config ----------
 get_num <- function(x, fallback) {
@@ -13,11 +13,10 @@ get_num <- function(x, fallback) {
   if (is.null(v) || length(v) == 0 || is.na(v) || !is.finite(v)) return(fallback)
   v
 }
-sanitize_model <- function(x){
-  x <- Sys.getenv(x, unset = "gpt-4.1")
+sanitize_model <- function(envvar){
+  x <- Sys.getenv(envvar, unset = "gpt-4.1")
   x <- trimws(x)
-  x <- gsub('^"+|"+$', "", x)
-  x
+  gsub('^"+|"+$', "", x)
 }
 default_model <- sanitize_model("OPENAI_MODEL")
 throttle_sec  <- get_num("OPENAI_THROTTLE_SEC", 2)
@@ -42,25 +41,22 @@ should_retry_without_schema <- function(body_txt){
   grepl("json_schema|response_format|schema.*not.*supported|invalid.*response_format", tolower(body_txt))
 }
 
-# helper: perform req, always return a list(status, body, json) or NULL on build failure
+# perform request; always return a list with $status (may be NA), $body (string), $json (parsed or NULL)
 do_req <- function(req){
   obj <- tryCatch(req_perform(req), error = function(e) e)
-  # If we got a response object (success OR http error), normalize it
   resp <- NULL
   if (inherits(obj, "httr2_response")) {
     resp <- obj
   } else {
-    # httr2_http_error typically has $response
     resp <- tryCatch(obj$response, error=function(e) NULL)
     if (is.null(resp)) {
-      # no usable response, return a synthetic error signal
       return(list(status = NA_integer_, body = paste("transport/build error:", conditionMessage(obj)), json = NULL))
     }
   }
-  st <- resp_status(resp)
+  st <- suppressWarnings(resp_status(resp))
   body_txt <- tryCatch(resp_body_string(resp), error=function(e) "")
   js <- NULL
-  if (st < 300) {
+  if (!is.na(st) && st < 300) {
     js <- tryCatch(jsonlite::fromJSON(body_txt, simplifyVector = FALSE), error=function(e) NULL)
   }
   list(status = st, body = body_txt, json = js)
@@ -155,16 +151,20 @@ Reglas:
         req_body_json(body, auto_unbox = TRUE)
 
       res <- do_req(req)
-      if (is.null(res)) { message("[extract] build/transport error (no response)"); next }
-      message("[extract] http_status=", res$status)
-      if (res$status >= 300){
-        # show part of the body and decide if we should drop schema
-        message("[extract] 4xx/5xx body: ", substr(res$body, 1, 600))
-        if (use_schema && should_retry_without_schema(res$body)) next
+      message("[extract] http_status=", ifelse(is.na(res$status), "NA", as.character(res$status)))
+
+      # Treat NA or >=300 as failure and continue
+      if (is.na(res$status) || res$status >= 300){
+        if (!is.na(res$status)) {
+          message("[extract] 4xx/5xx body: ", substr(res$body, 1, 600))
+          if (use_schema && should_retry_without_schema(res$body)) next
+        } else {
+          message("[extract] no HTTP status (transport/build error), moving to next mode")
+        }
         next
       }
 
-      # success path: parse JSON content
+      # Success path
       out_txt <- tryCatch(res$json$choices[[1]]$message$content, error=function(e) NA_character_)
       if (is.null(out_txt) || length(out_txt)==0 || is.na(out_txt) || !nzchar(out_txt)) { next }
       parsed <- tryCatch(jsonlite::fromJSON(out_txt, simplifyVector = TRUE), error=function(e) NULL)
@@ -205,10 +205,9 @@ Reglas:
         req_body_json(body, auto_unbox = TRUE)
 
       res <- do_req(req)
-      if (is.null(res)) { message("[extract] build/transport error (no response)"); next }
-      message("[extract] http_status=", res$status)
-      if (res$status >= 300){
-        message("[extract] 4xx/5xx body: ", substr(res$body, 1, 600))
+      message("[extract] http_status=", ifelse(is.na(res$status), "NA", as.character(res$status)))
+      if (is.na(res$status) || res$status >= 300){
+        if (!is.na(res$status)) message("[extract] 4xx/5xx body: ", substr(res$body, 1, 600))
         next
       }
 
