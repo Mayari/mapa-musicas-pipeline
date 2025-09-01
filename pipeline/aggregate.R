@@ -4,25 +4,25 @@ suppressPackageStartupMessages({
   library(stringr)
 })
 
-norm_name <- function(x){
-  x %>%
-    tolower() %>%
-    str_replace_all("_", " ") %>%
-    str_squish()
-}
+# Use the shared helpers
+source("pipeline/constants.R")
 
+# --- small utilities ----
+norm_name <- function(x){
+  x %>% tolower() %>% str_replace_all("_", " ") %>% str_squish()
+}
 get_state_from_path <- function(p){
   parts <- strsplit(p, "/")[[1]]
   i <- which(parts == "carteleras")
   if (length(i) && length(parts) >= i + 1) return(parts[i + 1])
   NA_character_
 }
-
 safe_write_csv <- function(df, path){
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   readr::write_csv(df, path)
 }
 
+# --- main ---
 aggregate_all <- function(events_path, venues_path, out_dir){
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
@@ -40,44 +40,37 @@ aggregate_all <- function(events_path, venues_path, out_dir){
     return(invisible())
   }
 
-  # derive year/month
-  ev <- ev %>% mutate(year = year(event_date), month = month(event_date))
+  # derive year/month for grouping
+  ev <- ev %>% mutate(year = lubridate::year(event_date), month = lubridate::month(event_date))
 
   # ensure state exists (derive from image path if missing)
   if (!"state" %in% names(ev) || all(is.na(ev$state))) {
     ev <- ev %>% mutate(state = purrr::map_chr(source_image, get_state_from_path))
   }
 
-  # load venues and make sure there's a 'venue' column
-  venues <- suppressWarnings(readr::read_csv(venues_path, show_col_types = FALSE))
-  if (!"venue" %in% names(venues)) {
-    if ("venue_name" %in% names(venues)) venues <- venues %>% rename(venue = venue_name)
-    else if ("name" %in% names(venues)) venues <- venues %>% rename(venue = name)
-    else {
-      message("[aggregate] Venues file has no 'venue'/'venue_name'/'name' column; proceeding without join.")
-      venues <- tibble(venue = character(), municipality = character(), state = character(), lat = double(), lon = double())
-    }
-  }
+  # Load venues, accept venue/venue_name/name, normalize to `venue`
+  venues <- suppressWarnings(readr::read_csv(venues_path, show_col_types = FALSE)) %>%
+    canonicalize_venues()
 
-  # normalized keys for robust joining
-  ev <- ev %>% mutate(venue_key = norm_name(venue))
-  venues <- venues %>% mutate(venue_key = norm_name(venue))
+  # Build normalized keys for robust joining
+  ev     <- ev     %>% mutate(venue_key = norm_venue_key(venue))
+  venues <- venues %>% mutate(venue_key = norm_venue_key(venue))
 
-  # join municipality/state from venues (do not crash if missing)
-  evj <- ev %>%
-    left_join(venues %>% select(venue_key, municipality, state), by = "venue_key", keep = FALSE)
+  # Join municipality/state from venues (don’t crash if those columns don’t exist)
+  join_cols <- intersect(c("municipality","state"), names(venues))
+  evj <- ev %>% left_join(venues %>% select(any_of(c("venue_key", join_cols))), by = "venue_key")
 
-  # prefer event-derived state, fallback to venues state
+  # Prefer event-derived state, fallback to venues state
   if ("state.x" %in% names(evj) && "state.y" %in% names(evj)) {
     evj <- evj %>% mutate(state = dplyr::coalesce(state.x, state.y)) %>% select(-state.x, -state.y)
   }
 
-  # aggregates
-  agg_venue <- ev %>% count(venue, year, month, name = "events")
+  # Aggregations
+  agg_venue <- ev  %>% count(venue, year, month, name = "events")
   agg_muni  <- evj %>% count(municipality, year, month, name = "events")
-  agg_state <- evj %>% count(state, year, month, name = "events")
+  agg_state <- evj %>% count(state,        year, month, name = "events")
 
-  # write out
+  # Write outputs
   safe_write_csv(agg_venue, file.path(out_dir, "agg_venue_month.csv"))
   safe_write_csv(agg_muni,  file.path(out_dir, "agg_municipality_month.csv"))
   safe_write_csv(agg_state, file.path(out_dir, "agg_state_month.csv"))
