@@ -27,6 +27,9 @@ safe_source("pipeline/extract_tesseract.R")
 safe_source("pipeline/parse_posters.R")
 safe_source("pipeline/validate.R")
 safe_source("pipeline/aggregate.R")
+safe_source("pipeline/geocode_venues.R")
+
+                           
 
 # --------- helpers ----------
 month_map <- c(
