@@ -28,6 +28,8 @@ safe_source("pipeline/parse_posters.R")
 safe_source("pipeline/validate.R")
 safe_source("pipeline/aggregate.R")
 safe_source("pipeline/geocode_venues.R")        # optional; fills missing coords
+safe_source("pipeline/venue_rules.R")
+
 
 # --------- helpers ----------
 month_map <- c(
