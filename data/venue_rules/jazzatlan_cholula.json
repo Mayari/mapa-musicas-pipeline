@@ -1,0 +1,27 @@
+{
+  "venue_key": "jazzatlán cholula",
+  "residencies": [
+    {
+      "name": "miercoles_de_salsa",
+      "heading_regex": "mi[eé]rcoles\\s+de\\s+salsa",
+      "event_title": "Miércoles de Salsa",
+      "weekday": "miercoles",
+      "line_window": 20,
+      "band_line_regex": "([\\p{L}\\d &'\\.-]+?)\\s*[:\\-]\\s*([0-9]{1,2}(?:\\s*(?:,|y)\\s*[0-9]{1,2})+)",
+      "drop_band_regex": "^\\s*orquesta\\b",
+      "snap_days": true,
+      "corrections": [
+        {"from": "Explosión Latina", "to": "Exploración Latina"}
+      ]
+    },
+    {
+      "name": "martes_de_jam",
+      "heading_regex": "(cada|todos?\\s+los)\\s+martes|martes\\s+de\\s+jam|jam\\s*session",
+      "event_title": "Martes de Jam",
+      "weekday": "martes",
+      "line_window": 12,
+      "default_band": "Jam de la casa",
+      "snap_days": false
+    }
+  ]
+}
