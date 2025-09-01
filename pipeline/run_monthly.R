@@ -120,6 +120,11 @@ ven_auto <- meta %>%
   select(venue, venue_key, state) %>%
   distinct()
 readr::write_csv(ven_auto, file.path(out_dir, "venues_autofill.csv"))
+                           
+# Auto-geocode missing coordinates (bounded by GEOCODE_MAX)
+if (exists("geocode_missing_venues")) {
+  try(geocode_missing_venues(venues_path), silent = TRUE)
+}
 
 # --------- run extractors ----------
 use_openai <- nzchar(Sys.getenv("OPENAI_API_KEY"))
