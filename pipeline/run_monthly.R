@@ -6,7 +6,7 @@ suppressPackageStartupMessages({
   library(stringr)
 })
 
-VERSION <- "run_monthly v1.4 (auto-state-from-path + coords pass-through + residencias/time)"
+VERSION <- "run_monthly v1.4.1 (auto-state + coords-safe + residencias/time)"
 message(">> ", VERSION)
 
 # --------- args ----------
@@ -18,18 +18,16 @@ out_dir       <- get_arg("--out_dir",     "data")
 agg_dir       <- get_arg("--agg_dir",     file.path(out_dir, "aggregations"))
 manifest_path <- get_arg("--manifest_path", "posters_manifest.csv")
 
-# --------- module loading (kept) ----------
+# --------- module loading ----------
 safe_source <- function(p){ if (file.exists(p)) source(p) else message("Missing ", p, " (skipping)") }
 safe_source("pipeline/extract_openai.R")
 safe_source("pipeline/extract_openai_text.R")
-safe_source("pipeline/extract_gvision.R")       # optional (future)
+safe_source("pipeline/extract_gvision.R")       # optional, may be absent
 safe_source("pipeline/extract_tesseract.R")
 safe_source("pipeline/parse_posters.R")
 safe_source("pipeline/validate.R")
 safe_source("pipeline/aggregate.R")
-safe_source("pipeline/geocode_venues.R")
-
-                           
+safe_source("pipeline/geocode_venues.R")        # optional; fills missing coords
 
 # --------- helpers ----------
 month_map <- c(
@@ -120,8 +118,8 @@ ven_auto <- meta %>%
   select(venue, venue_key, state) %>%
   distinct()
 readr::write_csv(ven_auto, file.path(out_dir, "venues_autofill.csv"))
-                           
-# Auto-geocode missing coordinates (bounded by GEOCODE_MAX)
+
+# --- Auto-geocode missing coords (optional, harmless if file/function absent)
 if (exists("geocode_missing_venues")) {
   try(geocode_missing_venues(venues_path), silent = TRUE)
 }
@@ -196,10 +194,16 @@ if (nrow(venues)) {
   name_col <- intersect(c("venue","venue_name","name"), names(venues))
   if (length(name_col) && name_col[1] != "venue") venues <- dplyr::rename(venues, venue = dplyr::all_of(name_col[1]))
   venues <- venues %>% mutate(venue_key = tolower(venue) %>% gsub("_"," ",.) %>% trimws())
+  # keep whatever optional columns exist
   keep <- intersect(c("venue_key","municipality","state","lat","lon","latitude","longitude","address"), names(venues))
   venues_j <- venues %>% select(all_of(keep))
 } else {
   venues_j <- tibble(venue_key=character())
+}
+
+# SAFE: add any missing optional columns so downstream mutate never errors
+for (nm in c("municipality","state","latitude","longitude","lat","lon","address")) {
+  if (!nm %in% names(venues_j)) venues_j[[nm]] <- NA
 }
 
 if (!nrow(clean)) {
@@ -212,20 +216,27 @@ if (!nrow(clean)) {
     latitude=double(), longitude=double()
   )
 } else {
-  clean <- clean %>%
+  tmp <- clean %>%
     mutate(venue_key = tolower(venue) %>% gsub("_"," ",.) %>% trimws()) %>%
-    left_join(venues_j, by="venue_key") %>%
+    left_join(venues_j, by="venue_key")
+
+  # Ensure these columns exist BEFORE coalescing (even if NA)
+  for (nm in c("latitude","longitude","lat","lon","municipality","state")) {
+    if (!nm %in% names(tmp)) tmp[[nm]] <- NA
+  }
+
+  tmp <- tmp %>%
     mutate(
-      # Unify coordinate field names if present
-      latitude  = suppressWarnings(as.numeric(dplyr::coalesce(.data$latitude, .data$lat))),
+      latitude  = suppressWarnings(as.numeric(dplyr::coalesce(.data$latitude,  .data$lat))),
       longitude = suppressWarnings(as.numeric(dplyr::coalesce(.data$longitude, .data$lon))),
-      # Fallback state from folder path if still missing
       state     = dplyr::coalesce(.data$state, sapply(source_image, get_state_from_path))
     ) %>%
     select(-venue_key, -any_of(c("lat","lon"))) %>%
     relocate(weekday, .after = event_date) %>%
     relocate(municipality, state, .after = event_time) %>%
     relocate(latitude, longitude, .after = state)
+
+  clean <- tmp
 }
 
 # --- write main CSV
