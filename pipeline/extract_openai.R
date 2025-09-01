@@ -5,18 +5,18 @@ suppressPackageStartupMessages({
   library(glue)
 })
 
-message("[extract_openai.R] v2025-08-31+chatjson+residencias+event_title+time")
+message("[extract_openai.R] v2025-08-31+gpt41+jsonschema+vision")
 
-# --- config via env (optional) ---
+# --- config ---
 get_num <- function(x, fallback) {
   v <- suppressWarnings(as.numeric(Sys.getenv(x, unset = as.character(fallback))))
   if (is.null(v) || length(v) == 0 || is.na(v) || !is.finite(v)) return(fallback)
   v
 }
-openai_model  <- Sys.getenv("OPENAI_MODEL", unset = "gpt-4o-mini")
-throttle_sec  <- get_num("OPENAI_THROTTLE_SEC", 2)
+openai_model <- Sys.getenv("OPENAI_MODEL", unset = "gpt-4.1")  # override via secret
+throttle_sec <- get_num("OPENAI_THROTTLE_SEC", 2)
 
-# Read image → base64 data URI (robust)
+# Safe base64
 img_to_data_uri <- function(path){
   if (!file.exists(path)) stop("Image not found: ", path)
   ext  <- tolower(tools::file_ext(path))
@@ -39,7 +39,7 @@ perform_with_retry <- function(req, max_tries = 5){
       if (!st %in% c(429, 500:599)) return(resp)
       ra <- resp_header(resp, "retry-after"); if (!is.null(ra)) delay <- suppressWarnings(as.numeric(ra))
     }
-  Sys.sleep(delay); delay <- min(delay * 2, 20)
+    Sys.sleep(delay); delay <- min(delay * 2, 20)
   }
   if (inherits(last, "httr2_response")) return(last)
   stop(last)
@@ -47,25 +47,49 @@ perform_with_retry <- function(req, max_tries = 5){
 
 `%||%` <- function(a,b) if (!is.null(a)) a else b
 
+# ---- structured extractor (image → JSON) ----
 extract_openai_events <- function(image_path, venue_name, year, month){
   key <- Sys.getenv("OPENAI_API_KEY"); if (!nzchar(key)) return(tibble())
   if (!is.null(throttle_sec) && is.finite(throttle_sec) && throttle_sec > 0) Sys.sleep(throttle_sec)
 
   img <- img_to_data_uri(image_path)
 
-  # Clear rules so we get BANDS, not headings; include optional event_title + time
-  sys <- "Eres un extractor. Responde SOLO con JSON válido y minificado, sin texto extra."
+  # JSON Schema (Structured Outputs)
+  schema <- list(
+    type = "object",
+    properties = list(
+      venue  = list(type="string"),
+      year   = list(type="integer"),
+      month  = list(type="integer", minimum=1, maximum=12),
+      events = list(
+        type="array",
+        items=list(
+          type="object",
+          properties=list(
+            date        = list(type="string", pattern="^\\d{4}-\\d{2}-\\d{2}$"),
+            band        = list(type="string"),
+            event_title = list(type="string"),
+            time        = list(type="string", pattern="^(?:[01]\\d|2[0-3]):[0-5]\\d$")
+          ),
+          required = list("date","band"),
+          additionalProperties = FALSE
+        )
+      )
+    ),
+    required = list("events"),
+    additionalProperties = FALSE
+  )
+
+  sys <- "Eres un extractor. Responde SOLO con JSON válido que cumpla exactamente el JSON Schema."
   user_prompt <- glue(
-"Devuelve SOLO JSON minificado:
-{{\"venue\":\"{venue_name}\",\"year\":{year},\"month\":{month},\"events\":[{{\"date\":\"YYYY-MM-DD\",\"band\":\"<artista/banda>\",\"event_title\":\"<titulo opcional>\",\"time\":\"HH:MM\"}}]}}
-Reglas IMPORTANTES:
-- 'band' debe ser el nombre del artista/banda que toca. NO pongas títulos genéricos como 'Miércoles de Salsa', 'Valentine's Jazz Day', 'Jam Session', 'Residencia', 'Noche de...'. Esos van en 'event_title'.
-- Si hay un título grande (p. ej. 'Miércoles de Salsa') y el nombre del grupo está en texto más pequeño, usa ese grupo en 'band' y el título grande en 'event_title'.
-- Si dice 'cada martes'/'todos los miércoles'/'todos los <día>', crea un evento por CADA fecha de ese día del mes.
-- Si hay varios grupos y números de día que los reparten (p. ej. 'A: 7 y 21 / B: 14 y 28'), asigna correctamente cada día.
-- Si NO hay números y aparecen dos o más bandas, no inventes: omite esos casos ambiguos.
-- Hora: detecta '8 pm', '20:30', '20 h', '20 hrs', '20:30h'. Devuelve HH:MM (24h). Si no hay hora clara, omite 'time' en ese evento.
-- Ignora precios/cover, reservas, hashtags y patrocinadores."
+"Rellena este JSON sobre el cartel:
+{{\"venue\":\"{venue_name}\",\"year\":{year},\"month\":{month},\"events\":[...]}}
+Reglas:
+- 'band' = nombre del artista/banda (no títulos genéricos como 'Miércoles de Salsa', 'Valentine's Jazz Day', 'Jam', etc.). Esos van en 'event_title'.
+- Expande residencias: 'cada martes', 'todos los miércoles' ⇒ un evento por CADA fecha de ese día del mes {month}/{year}.
+- Si hay varios grupos con días (p.ej. 'A: 7 y 21 / B: 14 y 28'), asigna los días correctos.
+- Si hay varias horas, usa la que esté más cerca del artista/fecha. Formato 24h HH:MM. Si no hay hora clara, omite 'time'.
+- Ignora precios/reservas/patrocinios/hashtags."
   )
 
   messages <- list(
@@ -81,7 +105,14 @@ Reglas IMPORTANTES:
     messages = messages,
     temperature = 0,
     max_tokens = 1200,
-    response_format = list(type="json_object")
+    response_format = list(
+      type = "json_schema",
+      json_schema = list(
+        name = "EventsSchema",
+        schema = schema,
+        strict = TRUE
+      )
+    )
   )
 
   payload <- jsonlite::toJSON(body, auto_unbox = TRUE, null = "null")
