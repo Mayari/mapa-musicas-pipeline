@@ -5,7 +5,7 @@ suppressPackageStartupMessages({
   library(glue)
 })
 
-message("[extract_openai.R] v2025-08-31+diag4")
+message("[extract_openai.R] v2025-08-31+chatjson")
 
 # --- config via env (optional) ---
 get_num <- function(x, fallback) {
@@ -13,7 +13,7 @@ get_num <- function(x, fallback) {
   if (is.null(v) || length(v) == 0 || is.na(v) || !is.finite(v)) return(fallback)
   v
 }
-openai_model  <- Sys.getenv("OPENAI_MODEL", unset = "gpt-4o-mini")
+openai_model  <- Sys.getenv("OPENAI_MODEL", unset = "gpt-4o-mini")   # you can override with a secret
 throttle_sec  <- get_num("OPENAI_THROTTLE_SEC", 2)
 
 # Safe base64 for local image files (handles unknown/zero size)
@@ -56,29 +56,6 @@ perform_with_retry <- function(req, max_tries = 5){
 
 `%||%` <- function(a,b) if (!is.null(a)) a else b
 
-get_output_text <- function(resj){
-  # Prefer top-level output_text (Responses API)
-  if (!is.null(resj$output_text) && length(resj$output_text) >= 1 &&
-      is.character(resj$output_text) && nzchar(resj$output_text[1])) {
-    return(resj$output_text[1])
-  }
-  # Fallback to choices[].message.content[].text
-  ch <- tryCatch(resj$choices, error=function(e) NULL)
-  if (!is.null(ch) && length(ch) >= 1){
-    msg <- tryCatch(ch[[1]]$message, error=function(e) NULL)
-    if (!is.null(msg) && !is.null(msg$content) && length(msg$content) >= 1){
-      for (i in seq_along(msg$content)){
-        it <- msg$content[[i]]
-        if (is.list(it) && !is.null(it$text) &&
-            is.character(it$text) && length(it$text) >= 1 && nzchar(it$text[1])) {
-          return(it$text[1])
-        }
-      }
-    }
-  }
-  return(NA_character_)
-}
-
 extract_openai_events <- function(image_path, venue_name, year, month){
   key <- Sys.getenv("OPENAI_API_KEY")
   if (!nzchar(key)) { message("[extract] no OPENAI_API_KEY → skip"); return(tibble()) }
@@ -90,31 +67,37 @@ extract_openai_events <- function(image_path, venue_name, year, month){
   img <- img_to_data_uri(image_path)
   message("[extract] data_uri_len=", nchar(img))
 
-  prompt <- glue(
-'Devuelve SOLO JSON minificado:
+  # System+user messages; force JSON mode
+  sys <- "Eres un extractor que responde SOLO con JSON valido y minificado, sin explicaciones."
+  user_prompt <- glue(
+'Devuelve SOLO JSON minificado con este esquema:
 {{"venue":"{venue_name}","year":{year},"month":{month},"events":[{{"date":"YYYY-MM-DD","band":"<artista/banda>"}}]}}
-Reglas: usa month={month} y year={year} si el cartel solo muestra días. Ignora precios/horas.'
+Reglas: si el día no tiene mes/año explícitos, usa month={month}, year={year}. Ignora precios, horas y patrocinadores.'
   )
 
-  body <- list(
-    model = openai_model,
-    input = list(
-      list(
-        role = "user",
-        content = list(
-          list(type = "input_text",  text = prompt),
-          list(type = "input_image", image_url = img)
-        )
+  messages <- list(
+    list(role="system", content=sys),
+    list(
+      role="user",
+      content = list(
+        list(type="text", text=user_prompt),
+        list(type="image_url", image_url=list(url=img))
       )
     )
   )
 
-  # Pre-serialize JSON to avoid any edge-case in req_body_json
-  payload <- jsonlite::toJSON(body, auto_unbox = TRUE, null = "null", always_decimal = FALSE)
+  body <- list(
+    model = openai_model,
+    messages = messages,
+    temperature = 0,
+    max_tokens = 600,
+    response_format = list(type="json_object")
+  )
+
+  payload <- jsonlite::toJSON(body, auto_unbox = TRUE, null = "null")
   message("[extract] payload_len=", nchar(payload))
 
-  # Build & send request
-  req <- request("https://api.openai.com/v1/responses") |>
+  req <- request("https://api.openai.com/v1/chat/completions") |>
     req_headers(
       Authorization = paste("Bearer", key),
       "Content-Type" = "application/json"
@@ -123,10 +106,7 @@ Reglas: usa month={month} y year={year} si el cartel solo muestra días. Ignora 
 
   resp <- perform_with_retry(req, max_tries = 5)
 
-  if (!inherits(resp, "httr2_response")){
-    stop("HT error (no response object)")
-  }
-
+  if (!inherits(resp, "httr2_response")) stop("HT error (no response object)")
   st <- resp_status(resp); message("[extract] http_status=", st)
   if (st >= 300){
     msg <- tryCatch(resp_body_string(resp), error = function(e) paste("status", st))
@@ -134,12 +114,11 @@ Reglas: usa month={month} y year={year} si el cartel solo muestra días. Ignora 
     return(tibble())
   }
 
-  resj    <- resp_body_json(resp)
-  out_txt <- get_output_text(resj)
+  res <- resp_body_json(resp)
+  out_txt <- tryCatch(res$choices[[1]]$message$content, error=function(e) NA_character_)
 
-  # SAFER: handle zero-length output
-  if (is.null(out_txt) || length(out_txt) == 0 || is.na(out_txt) || !nzchar(out_txt)) {
-    message("[extract] empty output_text")
+  if (is.null(out_txt) || length(out_txt)==0 || is.na(out_txt) || !nzchar(out_txt)) {
+    message("[extract] empty chat content")
     return(tibble())
   }
 
