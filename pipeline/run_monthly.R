@@ -69,6 +69,30 @@ meta <- meta |> filter(!is.na(venue_name), !is.na(year), !is.na(month)) |> renam
 message("Parsed metadata rows (usable): ", nrow(meta))
 if (!nrow(meta)) { message("No usable filenames parsed. Exiting."); quit(save="no", status=0) }
 
+# ... (earlier code unchanged)
+
+# --- WRITE venues_autofill.csv (infer state from folder path)
+# This helps fill state automatically even if venues.csv is missing it.
+ven_auto <- meta %>%
+  mutate(
+    venue_key = tolower(venue) %>% gsub("_"," ",.) %>% trimws()
+  ) %>%
+  filter(!is.na(state) & nzchar(state)) %>%
+  select(venue, venue_key, state) %>%
+  distinct()
+
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+readr::write_csv(ven_auto, file.path(out_dir, "venues_autofill.csv"))
+
+use_openai <- nzchar(Sys.getenv("OPENAI_API_KEY"))
+use_gcv    <- nzchar(Sys.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+
+openai_events <- tibble(); ocr_raw <- tibble(); text_events <- tibble()
+
+# ... (rest of run_monthly.R unchanged)
+
+
+                           
 use_openai <- nzchar(Sys.getenv("OPENAI_API_KEY"))
 use_gcv    <- nzchar(Sys.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
 
