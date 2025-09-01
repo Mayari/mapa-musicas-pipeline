@@ -12,7 +12,7 @@ suppressPackageStartupMessages({
 })
 
 # ---- version banner ----
-VERSION <- "run_monthly filename-ingest v1.0 (2025-08-30)"
+VERSION <- "run_monthly filename-ingest v1.1 (weekday+time)"
 message(">> ", VERSION)
 
 # ---- arg parsing ----
@@ -99,7 +99,7 @@ parse_from_filename <- function(path){
   m <- str_match(stem_lc, "^((20)\\d{2})([a-záéíóúñ]{3,10})_(.*)_(\\d+)$")
   if (!all(is.na(m))) {
     yr  <- as.integer(m[,2])
-    mo_tok <- gsub("[^a-z]", "", m[,4])  # <- month token is group 4 here
+    mo_tok <- gsub("[^a-z]", "", m[,4])
     mo  <- suppressWarnings(as.integer(month_map[mo_tok]))
     venue_raw <- m[,5]
     pg  <- as.integer(m[,6])
@@ -202,6 +202,10 @@ if (use_gcv && exists("extract_gvision_text")) {
 # Parse Vision OCR into events (if any)
 vision_events <- if (nrow(vision_raw) && exists("parse_poster_events")) parse_poster_events(vision_raw) else tibble()
 
+# Ensure both sources have event_time column
+if (!"event_time" %in% names(openai_events)) openai_events <- openai_events %>% mutate(event_time = NA_character_)
+if (!"event_time" %in% names(vision_events)) vision_events <- vision_events %>% mutate(event_time = NA_character_)
+
 # Combine & dedupe
 openai_events <- openai_events |> mutate(source = "openai")
 vision_events <- vision_events |> mutate(source = "gvision")
@@ -209,6 +213,15 @@ all_events <- bind_rows(openai_events, vision_events) |> distinct()
 
 # Validate & clean (adds confidence, dedupes by venue/date/band) if available
 clean <- if (exists("validate_events")) validate_events(all_events) else all_events
+
+# ---- add weekday (Spanish) ----
+# Map lubridate::wday (Mon=1) -> c("lunes", ..., "domingo")
+if (nrow(clean)) {
+  clean <- clean %>%
+    mutate(
+      weekday = c("lunes","martes","miércoles","jueves","viernes","sábado","domingo")[lubridate::wday(event_date, week_start = 1)]
+    )
+}
 
 # ---- write outputs ----
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
@@ -221,8 +234,10 @@ if (!nrow(clean)) {
     venue_id = character(),
     event_date = as.Date(character()),
     band_name = character(),
+    event_time = character(),       # <- new column
     source = character(),
-    source_image = character()
+    source_image = character(),
+    weekday = character()           # <- new column
   )
 }
 readr::write_csv(clean, file.path(out_dir, "performances_monthly.csv"))
