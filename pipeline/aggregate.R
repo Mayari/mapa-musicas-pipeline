@@ -1,77 +1,87 @@
 suppressPackageStartupMessages({
   library(tidyverse)
   library(lubridate)
-  library(stringr)
 })
 
-# Use the shared helpers
-source("pipeline/constants.R")
+# Normalize a venues table to {venue_key, municipality, state}
+canon_venues <- function(df){
+  if (!nrow(df)) return(tibble(venue_key=character(), municipality=character(), state=character()))
+  # choose a name column
+  nm <- names(df)
+  if (!"venue" %in% nm) {
+    alt <- intersect(c("venue_name","name"), nm)
+    if (length(alt)) df <- dplyr::rename(df, venue = dplyr::all_of(alt[1])) else df$venue <- NA_character_
+  }
+  if (!"municipality" %in% names(df)) df$municipality <- NA_character_
+  if (!"state" %in% names(df)) df$state <- NA_character_
 
-# --- small utilities ----
-norm_name <- function(x){
-  x %>% tolower() %>% str_replace_all("_", " ") %>% str_squish()
-}
-get_state_from_path <- function(p){
-  parts <- strsplit(p, "/")[[1]]
-  i <- which(parts == "carteleras")
-  if (length(i) && length(parts) >= i + 1) return(parts[i + 1])
-  NA_character_
-}
-safe_write_csv <- function(df, path){
-  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
-  readr::write_csv(df, path)
+  df %>%
+    mutate(
+      venue_key = tolower(venue) |> gsub("_", " ", x = _) |> trimws()
+    ) %>%
+    select(venue_key, municipality, state) %>%
+    distinct()
 }
 
-# --- main ---
 aggregate_all <- function(events_path, venues_path, out_dir){
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
-  ev <- suppressWarnings(readr::read_csv(events_path, show_col_types = FALSE))
-
-  # If no events yet, write empty aggregation files and exit
+  ev <- tryCatch(readr::read_csv(events_path, show_col_types = FALSE), error = function(e) tibble())
   if (!nrow(ev)) {
+    readr::write_csv(tibble(state=character(), year=integer(), month=integer(), events=integer()),
+                     file.path(out_dir, "states_month.csv"))
+    readr::write_csv(tibble(state=character(), municipality=character(), year=integer(), month=integer(), events=integer()),
+                     file.path(out_dir, "municipalities_month.csv"))
+    readr::write_csv(tibble(state=character(), municipality=character(), venue=character(), year=integer(), month=integer(), events=integer()),
+                     file.path(out_dir, "venues_month.csv"))
     message("[aggregate] No events; writing empty aggregation files.")
-    safe_write_csv(tibble(venue = character(), year = integer(), month = integer(), events = integer()),
-                   file.path(out_dir, "agg_venue_month.csv"))
-    safe_write_csv(tibble(municipality = character(), year = integer(), month = integer(), events = integer()),
-                   file.path(out_dir, "agg_municipality_month.csv"))
-    safe_write_csv(tibble(state = character(), year = integer(), month = integer(), events = integer()),
-                   file.path(out_dir, "agg_state_month.csv"))
-    return(invisible())
+    return(invisible(NULL))
   }
 
-  # derive year/month for grouping
-  ev <- ev %>% mutate(year = lubridate::year(event_date), month = lubridate::month(event_date))
+  # Ensure required columns exist
+  if (!"event_date" %in% names(ev)) ev$event_date <- as.Date(ev$event_date)
+  ev <- ev %>%
+    mutate(
+      year  = if ("year"  %in% names(ev)) year  else lubridate::year(event_date),
+      month = if ("month" %in% names(ev)) month else lubridate::month(event_date)
+    )
 
-  # ensure state exists (derive from image path if missing)
-  if (!"state" %in% names(ev) || all(is.na(ev$state))) {
-    ev <- ev %>% mutate(state = purrr::map_chr(source_image, get_state_from_path))
+  if (!"venue" %in% names(ev)) {
+    if ("venue_name" %in% names(ev)) ev <- ev %>% mutate(venue = .data$venue_name) else ev$venue <- NA_character_
+  }
+  if (!"state" %in% names(ev)) ev$state <- NA_character_
+  if (!"municipality" %in% names(ev)) ev$municipality <- NA_character_
+
+  # Enrich from venues.csv if present
+  vdf <- tryCatch(readr::read_csv(venues_path, show_col_types = FALSE), error = function(e) tibble())
+  vcanon <- canon_venues(vdf)
+
+  if (nrow(vcanon)){
+    ev <- ev %>%
+      mutate(venue_key = tolower(venue) %>% gsub("_"," ",.) %>% trimws()) %>%
+      left_join(vcanon, by = "venue_key", suffix = c("", ".v")) %>%
+      mutate(
+        municipality = dplyr::coalesce(municipality, .data$municipality.v),
+        state        = dplyr::coalesce(state, .data$state.v)
+      ) %>%
+      select(-venue_key, -ends_with(".v"))
   }
 
-  # Load venues, accept venue/venue_name/name, normalize to `venue`
-  venues <- suppressWarnings(readr::read_csv(venues_path, show_col_types = FALSE)) %>%
-    canonicalize_venues()
+  # Aggregations (will include NA groups if some fields missing)
+  states_month <- ev %>%
+    count(state, year, month, name = "events") %>%
+    arrange(state, year, month)
 
-  # Build normalized keys for robust joining
-  ev     <- ev     %>% mutate(venue_key = norm_venue_key(venue))
-  venues <- venues %>% mutate(venue_key = norm_venue_key(venue))
+  municipalities_month <- ev %>%
+    count(state, municipality, year, month, name = "events") %>%
+    arrange(state, municipality, year, month)
 
-  # Join municipality/state from venues (don’t crash if those columns don’t exist)
-  join_cols <- intersect(c("municipality","state"), names(venues))
-  evj <- ev %>% left_join(venues %>% select(any_of(c("venue_key", join_cols))), by = "venue_key")
+  venues_month <- ev %>%
+    count(state, municipality, venue, year, month, name = "events") %>%
+    arrange(state, municipality, venue, year, month)
 
-  # Prefer event-derived state, fallback to venues state
-  if ("state.x" %in% names(evj) && "state.y" %in% names(evj)) {
-    evj <- evj %>% mutate(state = dplyr::coalesce(state.x, state.y)) %>% select(-state.x, -state.y)
-  }
-
-  # Aggregations
-  agg_venue <- ev  %>% count(venue, year, month, name = "events")
-  agg_muni  <- evj %>% count(municipality, year, month, name = "events")
-  agg_state <- evj %>% count(state,        year, month, name = "events")
-
-  # Write outputs
-  safe_write_csv(agg_venue, file.path(out_dir, "agg_venue_month.csv"))
-  safe_write_csv(agg_muni,  file.path(out_dir, "agg_municipality_month.csv"))
-  safe_write_csv(agg_state, file.path(out_dir, "agg_state_month.csv"))
+  readr::write_csv(states_month,         file.path(out_dir, "states_month.csv"))
+  readr::write_csv(municipalities_month, file.path(out_dir, "municipalities_month.csv"))
+  readr::write_csv(venues_month,         file.path(out_dir, "venues_month.csv"))
+  message("[aggregate] Wrote aggregates: states_month.csv, municipalities_month.csv, venues_month.csv")
 }
