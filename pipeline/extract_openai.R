@@ -5,7 +5,7 @@ suppressPackageStartupMessages({
   library(glue)
 })
 
-message("[extract_openai.R] v2025-08-31+chatjson+residencias+time")
+message("[extract_openai.R] v2025-08-31+chatjson+residencias+event_title+time")
 
 # --- config via env (optional) ---
 get_num <- function(x, fallback) {
@@ -16,7 +16,7 @@ get_num <- function(x, fallback) {
 openai_model  <- Sys.getenv("OPENAI_MODEL", unset = "gpt-4o-mini")
 throttle_sec  <- get_num("OPENAI_THROTTLE_SEC", 2)
 
-# Read image → base64 data URI (robust to unknown sizes)
+# Read image → base64 data URI (robust)
 img_to_data_uri <- function(path){
   if (!file.exists(path)) stop("Image not found: ", path)
   ext  <- tolower(tools::file_ext(path))
@@ -29,7 +29,7 @@ img_to_data_uri <- function(path){
   paste0("data:", mime, ";base64,", jsonlite::base64_enc(raw))
 }
 
-# Retry helper for 429/5xx
+# Retry helper
 perform_with_retry <- function(req, max_tries = 5){
   delay <- 1; last <- NULL
   for (i in seq_len(max_tries)){
@@ -39,7 +39,7 @@ perform_with_retry <- function(req, max_tries = 5){
       if (!st %in% c(429, 500:599)) return(resp)
       ra <- resp_header(resp, "retry-after"); if (!is.null(ra)) delay <- suppressWarnings(as.numeric(ra))
     }
-    Sys.sleep(delay); delay <- min(delay * 2, 20)
+  Sys.sleep(delay); delay <- min(delay * 2, 20)
   }
   if (inherits(last, "httr2_response")) return(last)
   stop(last)
@@ -53,21 +53,20 @@ extract_openai_events <- function(image_path, venue_name, year, month){
 
   img <- img_to_data_uri(image_path)
 
-  # SYSTEM: JSON only; expand residencias; return 24h time
+  # Clear rules so we get BANDS, not headings; include optional event_title + time
   sys <- "Eres un extractor. Responde SOLO con JSON válido y minificado, sin texto extra."
-
-  # USER PROMPT: rules for residencias + times
   user_prompt <- glue(
-"Devuelve SOLO JSON minificado con este esquema:
-{{\"venue\":\"{venue_name}\",\"year\":{year},\"month\":{month},\"events\":[{{\"date\":\"YYYY-MM-DD\",\"band\":\"<artista/banda>\",\"time\":\"HH:MM\"}}]}}
-Reglas:
-- Extrae TODOS los conciertos del cartel.
-- Si dice \"cada martes\"/\"todos los miércoles\"/\"todos los <día>\", crea un evento por CADA fecha de ese día en el mes indicado.
-- Si hay varias bandas para un mismo día fijo (p.ej. \"miércoles de salsa\" con fechas repartidas), usa los números de día cerca de cada banda para asignar.
-- Si un texto de residencia no trae números y hay UNA banda, asígnala a todos esos días.
-- Si hay DOS o más bandas pero NO hay números que repartan, no inventes: omite esos casos ambiguos.
-- Hora: detecta formatos como \"8 pm\", \"20:30\", \"20 h\", \"20 hrs\", \"20:30h\". Devuelve HH:MM en 24h. Si la hora está en la misma línea o cerca del artista/fecha, úsala; si hay varias, elige la más cercana. Si no hay hora, omite el campo en ese evento.
-- Ignora precios/cover, reservaciones, hashtags y patrocinadores.")
+"Devuelve SOLO JSON minificado:
+{{\"venue\":\"{venue_name}\",\"year\":{year},\"month\":{month},\"events\":[{{\"date\":\"YYYY-MM-DD\",\"band\":\"<artista/banda>\",\"event_title\":\"<titulo opcional>\",\"time\":\"HH:MM\"}}]}}
+Reglas IMPORTANTES:
+- 'band' debe ser el nombre del artista/banda que toca. NO pongas títulos genéricos como 'Miércoles de Salsa', 'Valentine's Jazz Day', 'Jam Session', 'Residencia', 'Noche de...'. Esos van en 'event_title'.
+- Si hay un título grande (p. ej. 'Miércoles de Salsa') y el nombre del grupo está en texto más pequeño, usa ese grupo en 'band' y el título grande en 'event_title'.
+- Si dice 'cada martes'/'todos los miércoles'/'todos los <día>', crea un evento por CADA fecha de ese día del mes.
+- Si hay varios grupos y números de día que los reparten (p. ej. 'A: 7 y 21 / B: 14 y 28'), asigna correctamente cada día.
+- Si NO hay números y aparecen dos o más bandas, no inventes: omite esos casos ambiguos.
+- Hora: detecta '8 pm', '20:30', '20 h', '20 hrs', '20:30h'. Devuelve HH:MM (24h). Si no hay hora clara, omite 'time' en ese evento.
+- Ignora precios/cover, reservas, hashtags y patrocinadores."
+  )
 
   messages <- list(
     list(role="system", content=sys),
@@ -81,7 +80,7 @@ Reglas:
     model = openai_model,
     messages = messages,
     temperature = 0,
-    max_tokens = 900,
+    max_tokens = 1200,
     response_format = list(type="json_object")
   )
 
@@ -104,12 +103,12 @@ Reglas:
   parsed <- tryCatch(jsonlite::fromJSON(out_txt, simplifyVector = TRUE), error=function(e) NULL)
   if (is.null(parsed) || is.null(parsed$events)) return(tibble())
 
-  # allow missing time
   tibble(
     venue        = parsed$venue %||% venue_name,
     venue_id     = NA_character_,
     event_date   = suppressWarnings(as.Date(parsed$events$date)),
     band_name    = parsed$events$band,
+    event_title  = parsed$events$event_title %||% NA_character_,
     event_time   = parsed$events$time %||% NA_character_,
     source       = "openai",
     source_image = image_path
