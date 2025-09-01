@@ -4,7 +4,7 @@ suppressPackageStartupMessages({
   library(stringr)
 })
 
-message("[parse_posters.R] v2025-09-01 residencias+jam")
+message("[parse_posters.R] v2025-09-01 residencias+jam+weekday-snap")
 
 weekday_index <- c(
   "lunes"=1, "martes"=2, "miércoles"=3, "miercoles"=3,
@@ -16,6 +16,17 @@ dates_for <- function(year, month, wd){
   last  <- first + months(1) - days(1)
   all   <- seq(first, last, by = "1 day")
   all[lubridate::wday(all, week_start = 1) == wd]
+}
+
+# If OCR read a wrong day (e.g., 19 instead of 17), try snapping within ±2 days to the target weekday.
+snap_day_to_weekday <- function(day, year, month, wd_idx){
+  cand <- day + c(0, -1, +1, -2, +2)
+  cand <- cand[cand >= 1 & cand <= 31]
+  for (d in cand){
+    dt <- as.Date(sprintf("%04d-%02d-%02d", year, month, d))
+    if (lubridate::wday(dt, week_start = 1) == wd_idx) return(d)
+  }
+  NA_integer_
 }
 
 parse_day_list <- function(s){
@@ -43,7 +54,6 @@ parse_one <- function(row){
 
   # ---- 1) Miércoles de Salsa with "Banda: 10 y 24" style lines ----
   if (grepl("mi[eé]rcoles\\s+de\\s+salsa", low)) {
-    # Look across the whole text for "Band: 10 y 24" pairs
     m <- stringr::str_match_all(
       low,
       "([\\p{L}\\d &'\\.\\-]+?)\\s*[:\\-]\\s*([0-9]{1,2}(?:\\s*(?:,|y)\\s*[0-9]{1,2})+)"
@@ -52,22 +62,23 @@ parse_one <- function(row){
       mm <- m[[1]]
       bands <- trimws(mm[,2])
       dayss <- mm[,3]
-      # Discard accidental capture of the heading itself
+      # Drop the heading itself if captured by accident
       keep <- !grepl("mi[eé]rcoles\\s+de\\s+salsa", bands)
       bands <- bands[keep]; dayss <- dayss[keep]
       if (length(bands)){
+        WED <- weekday_index["miércoles"]
         for (i in seq_along(bands)){
-          dn <- parse_day_list(dayss[i])
-          dn <- dn[dn >= 1 & dn <= 31]
+          dn0 <- parse_day_list(dayss[i])
+          dn  <- unique(na.omit(sapply(dn0, snap_day_to_weekday, year=row$year, month=row$month, wd_idx=WED)))
           if (length(dn)){
             dates <- as.Date(sprintf("%04d-%02d-%02d", row$year, row$month, dn))
             out[[length(out)+1]] <- tibble(
-              venue       = row$venue,
-              venue_id    = NA_character_,
-              event_date  = dates,
-              band_name   = stringr::str_squish(stringr::str_to_title(bands[i])),
-              event_title = title_case_es("Miércoles de Salsa"),
-              event_time  = NA_character_,
+              venue        = row$venue,
+              venue_id     = NA_character_,
+              event_date   = dates,
+              band_name    = stringr::str_squish(stringr::str_to_title(bands[i])),
+              event_title  = title_case_es("Miércoles de Salsa"),
+              event_time   = NA_character_,
               source_image = row$image_path
             )
           }
@@ -76,10 +87,14 @@ parse_one <- function(row){
     }
   }
 
-  # ---- 2) Martes de Jam / Jam Session residencies (no bands listed) ----
-  if (grepl("(cada|todos\\s+los)\\s+martes", low) ||
-      grepl("martes\\s+de\\s+jam", low) ||
-      grepl("\\bjam\\s+session\\b", low)) {
+  # ---- 2) Martes de Jam / Jam Session residencies ----
+  jam_present <- grepl("\\bjam\\b", low) || grepl("jam\\s*session", low)
+  jam_martes  <- grepl("(cada|todos?\\s+los)\\s+martes", low) ||
+                 grepl("martes\\s+de\\s+jam", low) ||
+                 grepl("martes[^\\n]{0,20}jam", low) ||
+                 grepl("jam[^\\n]{0,20}martes", low)
+
+  if (jam_present && jam_martes) {
     tues <- dates_for(row$year, row$month, weekday_index["martes"])
     if (length(tues)){
       out[[length(out)+1]] <- tibble(
