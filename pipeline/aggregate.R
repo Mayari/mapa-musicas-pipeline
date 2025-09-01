@@ -3,11 +3,10 @@ suppressPackageStartupMessages({
   library(lubridate)
 })
 
-# Normalize a venues table to {venue_key, municipality, state}
 canon_venues <- function(df){
   if (!nrow(df)) return(tibble(venue_key=character(), municipality=character(), state=character()))
-  # choose a name column
   nm <- names(df)
+  # normalize name column to 'venue'
   if (!"venue" %in% nm) {
     alt <- intersect(c("venue_name","name"), nm)
     if (length(alt)) df <- dplyr::rename(df, venue = dplyr::all_of(alt[1])) else df$venue <- NA_character_
@@ -16,9 +15,7 @@ canon_venues <- function(df){
   if (!"state" %in% names(df)) df$state <- NA_character_
 
   df %>%
-    mutate(
-      venue_key = tolower(venue) |> gsub("_", " ", x = _) |> trimws()
-    ) %>%
+    mutate(venue_key = tolower(venue) |> gsub("_"," ", x = _) |> trimws()) %>%
     select(venue_key, municipality, state) %>%
     distinct()
 }
@@ -52,22 +49,38 @@ aggregate_all <- function(events_path, venues_path, out_dir){
   if (!"state" %in% names(ev)) ev$state <- NA_character_
   if (!"municipality" %in% names(ev)) ev$municipality <- NA_character_
 
-  # Enrich from venues.csv if present
-  vdf <- tryCatch(readr::read_csv(venues_path, show_col_types = FALSE), error = function(e) tibble())
-  vcanon <- canon_venues(vdf)
+  # Read explicit venues.csv and optional auto-fill table
+  vdf   <- tryCatch(readr::read_csv(venues_path, show_col_types = FALSE), error = function(e) tibble())
+  vauto <- tryCatch(readr::read_csv(file.path(dirname(venues_path), "venues_autofill.csv"), show_col_types = FALSE),
+                    error = function(e) tibble())
 
-  if (nrow(vcanon)){
-    ev <- ev %>%
-      mutate(venue_key = tolower(venue) %>% gsub("_"," ",.) %>% trimws()) %>%
-      left_join(vcanon, by = "venue_key", suffix = c("", ".v")) %>%
+  vcanon_explicit <- canon_venues(vdf)
+  vcanon_auto     <- canon_venues(vauto)  # may only have state
+
+  # Merge: prefer explicit values; use auto as fallback or to add missing venues
+  if (nrow(vcanon_auto)) {
+    vcanon <- full_join(vcanon_explicit, vcanon_auto, by = "venue_key", suffix = c("", "_auto")) %>%
       mutate(
-        municipality = dplyr::coalesce(municipality, .data$municipality.v),
-        state        = dplyr::coalesce(state, .data$state.v)
+        municipality = dplyr::coalesce(municipality, municipality_auto),
+        state        = dplyr::coalesce(state, state_auto)
       ) %>%
-      select(-venue_key, -ends_with(".v"))
+      select(venue_key, municipality, state) %>%
+      distinct()
+  } else {
+    vcanon <- vcanon_explicit
   }
 
-  # Aggregations (will include NA groups if some fields missing)
+  # Enrich events with municipality/state from merged canon (without overwriting known values)
+  ev <- ev %>%
+    mutate(venue_key = tolower(venue) %>% gsub("_"," ",.) %>% trimws()) %>%
+    left_join(vcanon, by = "venue_key", suffix = c("", ".v")) %>%
+    mutate(
+      municipality = dplyr::coalesce(municipality, .data$municipality.v),
+      state        = dplyr::coalesce(state,        .data$state.v)
+    ) %>%
+    select(-venue_key, -ends_with(".v"))
+
+  # Aggregations
   states_month <- ev %>%
     count(state, year, month, name = "events") %>%
     arrange(state, year, month)
