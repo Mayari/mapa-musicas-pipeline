@@ -2,7 +2,7 @@
 suppressPackageStartupMessages({
   library(tidyverse)
   library(lubridate)
-  library/jsonlite)
+  library(jsonlite)  
   library(stringr)
 })
 
