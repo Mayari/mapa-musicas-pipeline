@@ -2,11 +2,11 @@
 suppressPackageStartupMessages({
   library(tidyverse)
   library(lubridate)
-  library(jsonlite)
+  library/jsonlite)
   library(stringr)
 })
 
-VERSION <- "run_monthly v1.2 (weekday+time+state+municipality+per-image-logs)"
+VERSION <- "run_monthly v1.3 (weekday+time+state/muni+per-image-logs+tesseract+textpass)"
 message(">> ", VERSION)
 
 args <- commandArgs(trailingOnly = TRUE)
@@ -20,7 +20,9 @@ manifest_path <- get_arg("--manifest_path", "posters_manifest.csv")
 
 safe_source <- function(p){ if (file.exists(p)) source(p) else message("Missing ", p, " (skipping)") }
 safe_source("pipeline/extract_openai.R")
-safe_source("pipeline/extract_gvision.R")
+safe_source("pipeline/extract_openai_text.R")   # NEW
+safe_source("pipeline/extract_gvision.R")       # optional, if you later add GCV
+safe_source("pipeline/extract_tesseract.R")     # NEW
 safe_source("pipeline/parse_posters.R")
 safe_source("pipeline/validate.R")
 safe_source("pipeline/aggregate.R")
@@ -70,59 +72,73 @@ if (!nrow(meta)) { message("No usable filenames parsed. Exiting."); quit(save="n
 use_openai <- nzchar(Sys.getenv("OPENAI_API_KEY"))
 use_gcv    <- nzchar(Sys.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
 
-openai_events <- tibble(); vision_raw <- tibble()
+openai_events <- tibble()
+ocr_raw       <- tibble()
+text_events   <- tibble()
 
+# 1) OpenAI image→JSON (structured outputs)
 if (use_openai && exists("extract_openai_events")) {
-  message("Running OpenAI extraction…")
+  message("Running OpenAI image extraction…")
   openai_events <- purrr::map_dfr(seq_len(nrow(meta)), function(i){
     row <- meta[i,]
-    tryCatch(
-      extract_openai_events(row$image_path, row$venue, row$year, row$month),
-      error=function(e){ message("OpenAI failed for ", row$image_path, ": ", e$message); tibble() }
-    )
+    tryCatch(extract_openai_events(row$image_path, row$venue, row$year, row$month),
+             error=function(e){ message("OpenAI failed for ", row$image_path, ": ", e$message); tibble() })
   })
-} else message("Skipping OpenAI extraction (no key or extractor missing).")
+} else message("Skipping OpenAI image extraction (no key or extractor missing).")
 
-if (use_gcv && exists("extract_gvision_text")) {
-  message("Running Google Vision OCR…")
-  vision_raw <- purrr::map_dfr(seq_len(nrow(meta)), function(i){
+# 2) Tesseract OCR → raw text
+if (exists("extract_tesseract_text")) {
+  message("Running Tesseract OCR…")
+  ocr_raw <- purrr::map_dfr(seq_len(nrow(meta)), function(i){
     row <- meta[i,]
-    tryCatch(
-      extract_gvision_text(row$image_path, NA_character_, row$venue, row$year, row$month),
-      error=function(e){ message("Vision failed for ", row$image_path, ": ", e$message); tibble() }
-    )
+    tryCatch(extract_tesseract_text(row$image_path, NA_character_, row$venue, row$year, row$month),
+             error=function(e){ message("Tesseract failed for ", row$image_path, ": ", e$message); tibble() })
   })
-} else message("Skipping Vision OCR (no creds or extractor missing).")
+}
 
-vision_events <- if (nrow(vision_raw) && exists("parse_poster_events")) parse_poster_events(vision_raw) else tibble()
+# 3) Parse OCR text into events (regex rules for residencias, times)
+vision_events <- if (nrow(ocr_raw) && exists("parse_poster_events")) parse_poster_events(ocr_raw) else tibble()
 
-if (!"event_time" %in% names(openai_events)) openai_events <- openai_events %>% mutate(event_time = NA_character_)
-if (!"event_title"%in% names(openai_events)) openai_events <- openai_events %>% mutate(event_title= NA_character_)
-if (!"event_time" %in% names(vision_events)) vision_events <- vision_events %>% mutate(event_time = NA_character_)
-if (!"event_title"%in% names(vision_events)) vision_events <- vision_events %>% mutate(event_title= NA_character_)
+# 4) Optional: Text-only LLM pass to structure OCR text (helps with complex layouts)
+if (use_openai && exists("extract_openai_events_from_text") && nrow(ocr_raw)){
+  message("Running OpenAI text-only pass on OCR…")
+  text_events <- purrr::map_dfr(seq_len(nrow(ocr_raw)), function(i){
+    rr <- ocr_raw[i,]
+    tryCatch(extract_openai_events_from_text(rr$ocr_text, rr$venue, rr$year, rr$month),
+             error=function(e){ tibble() })
+  })
+}
 
-openai_events <- openai_events |> mutate(source = "openai")
-vision_events <- vision_events |> mutate(source = "gvision")
-all_events <- bind_rows(openai_events, vision_events) |> distinct()
+# Ensure columns exist
+for (nm in c("event_time","event_title")) {
+  if (!nm %in% names(openai_events)) openai_events[[nm]] <- NA_character_
+  if (!nm %in% names(vision_events)) vision_events[[nm]] <- NA_character_
+  if (!nm %in% names(text_events))   text_events[[nm]]   <- NA_character_
+}
+
+# Combine & dedupe
+all_events <- bind_rows(openai_events %>% mutate(source="openai"),
+                        vision_events %>% mutate(source="tesseract"),
+                        text_events   %>% mutate(source="openai-text")) %>%
+  distinct()
 
 clean <- if (exists("validate_events")) validate_events(all_events) else all_events
 
-# --- Per-image counts (helps debug if a page returns nothing)
+# --- Per-image counts
 if (nrow(clean)) {
   per_img <- clean %>% count(source_image, name="events")
   message("Per-image extracted events:")
   utils::capture.output(per_img) |> paste(collapse="\n") |> message()
 }
 
-# --- weekday (Spanish)
+# --- Weekday (Spanish)
 if (nrow(clean)) {
   clean <- clean %>% mutate(
     weekday = c("lunes","martes","miércoles","jueves","viernes","sábado","domingo")[lubridate::wday(event_date, week_start=1)]
   )
 }
 
-# --- Join in municipality/state to the MAIN CSV
-# read venues (accept venue/venue_name/name), normalize header → venue
+# --- Join municipality/state into main CSV
 canon_venues <- function(df){
   choices <- intersect(c("venue","venue_name","name"), names(df))
   if (!length(choices)) return(tibble(venue=character(), municipality=character(), state=character()))
@@ -131,7 +147,7 @@ canon_venues <- function(df){
 }
 venues <- tryCatch(readr::read_csv(venues_path, show_col_types = FALSE), error=function(e) tibble())
 venues <- canon_venues(venues)
-venues <- venues %>% mutate(venue_key = venues$venue %>% tolower() %>% gsub("_"," ",.) %>% trimws())
+venues <- venues %>% mutate(venue_key = tolower(venue) %>% gsub("_"," ",.) %>% trimws())
 
 if (!nrow(clean)) {
   message("No events extracted; writing empty CSV with headers.")
@@ -145,7 +161,6 @@ if (!nrow(clean)) {
   clean <- clean %>% mutate(venue_key = tolower(venue) %>% gsub("_"," ",.) %>% trimws())
   clean <- clean %>%
     left_join(venues %>% select(venue_key, municipality, state), by="venue_key") %>%
-    # fallback state from file path if join missing
     mutate(state = dplyr::coalesce(state, sapply(source_image, get_state_from_path))) %>%
     select(-venue_key)
 }
