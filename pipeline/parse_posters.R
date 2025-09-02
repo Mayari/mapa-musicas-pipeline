@@ -4,9 +4,8 @@ suppressPackageStartupMessages({
   library(stringr)
 })
 
-message("[parse_posters.R] v2025-09-01 per-venue rules + allowed + regex-fixes")
+message("[parse_posters.R] v2025-09-01 rules+whitelist+snap+tag")
 
-# ---- rules cache (populated by venue_rules.R if sourced) ----
 if (!exists("VENUE_RULES")) VENUE_RULES <- list()
 
 weekday_index <- c(
@@ -66,7 +65,20 @@ block_after_heading <- function(lines_lc, start_idx, max_lines = 14, stop_pat = 
   c(start_idx, end_idx)
 }
 
-# ---------- venue-aware engine ----------
+apply_corr <- function(b, corr_exact, corr_rx){
+  out <- b
+  if (nrow(corr_rx)) {
+    for (j in seq_len(nrow(corr_rx))){
+      if (grepl(corr_rx$from_rx[j], out, perl = TRUE)) out <- corr_rx$to[j]
+    }
+  }
+  if (nrow(corr_exact)) {
+    hit <- tolower(out) == tolower(corr_exact$from)
+    if (any(hit)) out <- corr_exact$to[which(hit)[1]]
+  }
+  out
+}
+
 parse_with_rules <- function(row, rules, raw_text){
   if (is.null(rules) || is.null(rules$residencies)) return(tibble())
   out <- list()
@@ -90,15 +102,13 @@ parse_with_rules <- function(row, rules, raw_text){
     allowed_bands <- r$allowed_bands %||% character(0)
     allowed_norm  <- tolower(trimws(allowed_bands))
 
-    # corrections: exact or regex
     corr_exact <- tibble(from = character(), to = character())
     corr_rx    <- tibble(from_rx = character(), to = character())
     if (!is.null(r$corrections)) {
-      if (!is.null(r$corrections$from))   corr_exact <- tibble(from = as.character(r$corrections$from),   to = as.character(r$corrections$to))
-      if (!is.null(r$corrections$from_rx)) corr_rx   <- tibble(from_rx = as.character(r$corrections$from_rx), to = as.character(r$corrections$to))
+      if (!is.null(r$corrections$from))    corr_exact <- tibble(from = as.character(r$corrections$from),    to = as.character(r$corrections$to))
+      if (!is.null(r$corrections$from_rx)) corr_rx    <- tibble(from_rx = as.character(r$corrections$from_rx), to = as.character(r$corrections$to))
     }
 
-    # find the heading area
     idx <- which(grepl(head_rx, lines_lc))
     trigger <- length(idx) > 0
     if (!trigger && !is.null(default_band) && nzchar(head_rx)) {
@@ -113,12 +123,12 @@ parse_with_rules <- function(row, rules, raw_text){
     rng <- block_after_heading(lines_lc, idx[1], max_lines = win_lines, stop_pat = stop_pat)
     block <- paste(lines[rng[1]:rng[2]], collapse = "\n")
 
-    # pattern "Band: 10 y 24"
     mm <- stringr::str_match_all(tolower(block), band_rx)
     if (length(mm) && length(mm[[1]]) > 0){
       M <- mm[[1]]
       bands <- stringr::str_squish(M[,2])
       dayss <- M[,3]
+
       for (i in seq_along(bands)){
         dn0 <- parse_day_list(dayss[i])
         dn  <- dn0
@@ -127,22 +137,9 @@ parse_with_rules <- function(row, rules, raw_text){
         }
         if (!length(dn)) next
 
-        # clean/correct band
         b_clean <- stringr::str_squish(stringr::str_to_title(bands[i]))
-        # regex corrections
-        if (nrow(corr_rx)){
-          for (j in seq_len(nrow(corr_rx))){
-            if (grepl(corr_rx$from_rx[j], b_clean, perl = TRUE)) b_clean <- corr_rx$to[j]
-          }
-        }
-        # exact corrections
-        if (nrow(corr_exact)){
-          hit <- tolower(b_clean) == tolower(corr_exact$from)
-          if (any(hit)) b_clean <- corr_exact$to[which(hit)[1]]
-        }
-        # drop unwanted bands
+        b_clean <- apply_corr(b_clean, corr_exact, corr_rx)
         if (!is.null(drop_band_rx) && grepl(drop_band_rx, tolower(b_clean))) next
-        # whitelist if provided
         if (length(allowed_norm) && !(tolower(b_clean) %in% allowed_norm)) next
 
         dates <- as.Date(sprintf("%04d-%02d-%02d", row$year, row$month, dn))
@@ -153,13 +150,13 @@ parse_with_rules <- function(row, rules, raw_text){
           band_name    = b_clean,
           event_title  = if (nzchar(ev_title)) title_case_es(ev_title) else NA_character_,
           event_time   = NA_character_,
-          source_image = row$image_path
+          source_image = row$image_path,
+          rule_name    = r$name %||% NA_character_
         )
       }
       next
     }
 
-    # default weekly rows (e.g., Jam)
     if (!is.null(default_band) && !is.na(wd_idx)) {
       dts <- dates_for(row$year, row$month, wd_idx)
       if (length(dts)){
@@ -170,7 +167,8 @@ parse_with_rules <- function(row, rules, raw_text){
           band_name    = default_band,
           event_title  = if (nzchar(ev_title)) title_case_es(ev_title) else NA_character_,
           event_time   = NA_character_,
-          source_image = row$image_path
+          source_image = row$image_path,
+          rule_name    = r$name %||% NA_character_
         )
       }
     }
@@ -180,7 +178,6 @@ parse_with_rules <- function(row, rules, raw_text){
   dplyr::bind_rows(out)
 }
 
-# Generic fallback (kept minimal: Jam)
 generic_parse <- function(row){
   txt <- row$ocr_text
   if (is.na(txt) || !nzchar(txt)) return(tibble())
@@ -202,7 +199,8 @@ generic_parse <- function(row){
         band_name    = "Jam de la casa",
         event_title  = "Martes De Jam",
         event_time   = NA_character_,
-        source_image = row$image_path
+        source_image = row$image_path,
+        rule_name    = "martes_de_jam"
       )
     }
   }
@@ -211,7 +209,6 @@ generic_parse <- function(row){
   dplyr::bind_rows(out)
 }
 
-# ocr_raw must have: image_path, ocr_text, venue, year, month
 parse_poster_events <- function(ocr_raw){
   purrr::map_dfr(seq_len(nrow(ocr_raw)), function(i){
     row <- ocr_raw[i,]
