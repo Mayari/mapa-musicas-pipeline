@@ -1,5 +1,6 @@
 # pipeline/extract_tesseract.R
-# v2025-09-02a robust (spa+eng, preprocess, multi-psm) + defaults + debug dumps
+# v2025-09-02b robust (spa+eng, preprocess, multi-psm) + defaults + debug dumps
+# - Fixes: use image_orient(); numeric deskew threshold; safer preprocessing chain.
 
 suppressPackageStartupMessages({
   library(magick)
@@ -23,7 +24,7 @@ dpi       <- suppressWarnings(as.integer(if (nzchar(dpi_env)) dpi_env else "350"
 min_width <- suppressWarnings(as.integer(if (nzchar(min_width_env)) min_width_env else "1400"))
 psms      <- suppressWarnings(as.integer(strsplit(if (nzchar(psms_env)) psms_env else "6,4,3", ",")[[1]]))
 
-cli::cli_h1("[extract_tesseract.R] v2025-09-02a robust (spa+eng, preprocess, multi-psm)")
+cli::cli_h1("[extract_tesseract.R] v2025-09-02b robust (spa+eng, preprocess, multi-psm)")
 cli::cli_alert_info("Effective OCR settings: langs={langs} dpi={dpi} min_width={min_width} psms={paste(psms, collapse=',')}")
 
 if (!nzchar(Sys.getenv("OCR_LANGS")))     cli::cli_alert_warning("OCR_LANGS empty; defaulting to {langs}")
@@ -36,20 +37,17 @@ if (!nzchar(Sys.getenv("OCR_PSMS")))      cli::cli_alert_warning("OCR_PSMS empty
 
 # ---- Helpers ----
 
-# Preprocess image for better OCR
+# Preprocess image for better OCR (grayscale, orient, resize, light sharpen, optional deskew)
 .preprocess_image <- function(path, min_width, dpi) {
-  # If density helps with vector/PDF or small rasters, pass here; otherwise image_read works fine.
   img <- tryCatch(
     image_read(path, density = paste0(dpi, "x", dpi)),
     error = function(e) image_read(path)
   )
 
-  # Convert to grayscale, orient based on EXIF, slight contrast, deskew
+  # Convert to grayscale & orient from EXIF
   img <- img |>
     image_quantize(colorspace = "gray") |>
-    image_orient() |>                 # <-- correct magick function
-    image_contrast(sharpen = 1L) |>
-    image_deskew(threshold = "40%")
+    image_orient()
 
   # Ensure minimum width (scale up if needed)
   info <- image_info(img)
@@ -58,8 +56,18 @@ if (!nzchar(Sys.getenv("OCR_PSMS")))      cli::cli_alert_warning("OCR_PSMS empty
     img <- image_resize(img, geometry = glue::glue("{scale_percent}%"))
   }
 
-  # Light unsharp mask (helps small fonts)
-  img <- image_unsharp_mask(img, radius = 1, sigma = 0.5, amount = 0.8, threshold = 0.02)
+  # Optional deskew with numeric threshold (degrees). If it fails, keep image.
+  img <- tryCatch(
+    image_deskew(img, threshold = 40),   # numeric, not "40%"
+    error = function(e) img
+  )
+
+  # Light unsharp (helps small fonts)
+  # magick provides image_unsharp(); radius 0 lets IM choose a reasonable radius.
+  img <- tryCatch(
+    image_unsharp(img, radius = 0, sigma = 1, amount = 0.75, threshold = 0.02),
+    error = function(e) img
+  )
 
   img
 }
