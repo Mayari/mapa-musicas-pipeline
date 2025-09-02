@@ -6,14 +6,19 @@
       "heading_regex": "mi[eé]rcoles\\s+de\\s+salsa",
       "event_title": "Miércoles de Salsa",
       "weekday": "miercoles",
-      "line_window": 20,
+      "line_window": 24,
       "band_line_regex": "([\\p{L}\\d &'\\.-]+?)\\s*[:\\-]\\s*([0-9]{1,2}(?:\\s*(?:,|y)\\s*[0-9]{1,2})+)",
-      "allowed_bands": ["Soneros Son", "Exploración Latina"],
-      "drop_band_regex": "^\\s*orquesta\\b",
+      "allowed_bands": [
+        "Soneros Son",
+        "Exploración Latina",
+        "Orquesta Exploración Latina"
+      ],
+      "drop_band_regex": "inmigrante",
       "snap_days": true,
       "corrections": [
-        { "from_rx": "(?i)explosi[oó]n\\s+latina", "to": "Exploración Latina" },
-        { "from_rx": "(?i)^son(\\b|eros)",        "to": "Soneros Son" }
+        { "from_rx": "(?i)^\\s*explosi[óo]n\\s+latina\\s*$", "to": "Exploración Latina" },
+        { "from_rx": "(?i)^\\s*orquesta\\s+exploraci[óo]n\\s+latina\\s*$", "to": "Exploración Latina" },
+        { "from_rx": "(?i)^\\s*son(eros\\s+son)?\\s*$", "to": "Soneros Son" }
       ]
     },
     {
