@@ -2,257 +2,194 @@
 suppressPackageStartupMessages({
   library(tidyverse)
   library(lubridate)
-  library(jsonlite)
   library(stringr)
+  library(readr)
+  library(glue)
 })
 
-VERSION <- "run_monthly v1.4.1 (auto-state + coords-safe + residencias/time)"
-message(">> ", VERSION)
+cat(">> run_monthly v1.4.2 (minimal + per-venue overrides + source_image-safe)\n")
 
-# --------- args ----------
-args <- commandArgs(trailingOnly = TRUE)
-get_arg <- function(flag, default = NULL){ i <- which(args == flag); if (length(i) == 0 || i == length(args)) return(default); args[i + 1] }
-images_dir    <- get_arg("--images_dir",  "carteleras")
-venues_path   <- get_arg("--venues_path", "data/venues.csv")
-out_dir       <- get_arg("--out_dir",     "data")
-agg_dir       <- get_arg("--agg_dir",     file.path(out_dir, "aggregations"))
-manifest_path <- get_arg("--manifest_path", "posters_manifest.csv")
+# --- Safe sourcing -------------------------------------------------------------
+safe_source <- function(path){
+  if (file.exists(path)) {
+    tryCatch({ source(path, chdir = TRUE) ; TRUE },
+             error = function(e){ message(sprintf("!! could not source %s: %s", path, e$message)); FALSE })
+  } else { FALSE }
+}
 
-# --------- module loading ----------
-safe_source <- function(p){ if (file.exists(p)) source(p) else message("Missing ", p, " (skipping)") }
+# Pipeline helpers (best-effort; okay if some are missing)
 safe_source("pipeline/extract_openai.R")
 safe_source("pipeline/extract_openai_text.R")
-safe_source("pipeline/extract_gvision.R")       # optional, may be absent
 safe_source("pipeline/extract_tesseract.R")
-safe_source("pipeline/parse_posters.R")
 safe_source("pipeline/validate.R")
-safe_source("pipeline/aggregate.R")
-safe_source("pipeline/geocode_venues.R")        # optional; fills missing coords
-safe_source("pipeline/venue_rules.R")
 
-
-# --------- helpers ----------
-month_map <- c(
-  "enero"=1,"ene"=1,"febrero"=2,"feb"=2,"marzo"=3,"mar"=3,"abril"=4,"abr"=4,"mayo"=5,"may"=5,
-  "junio"=6,"jun"=6,"julio"=7,"jul"=7,"agosto"=8,"ago"=8,"septiembre"=9,"sep"=9,"setiembre"=9,"set"=9,
-  "octubre"=10,"oct"=10,"noviembre"=11,"nov"=11,"diciembre"=12,"dic"=12
-)
-norm_name <- function(x){ x |> tolower() |> gsub("_"," ",x=_) |> gsub("\\s+"," ",x=_) |> trimws() }
-get_state_from_path <- function(path){
-  parts <- strsplit(path,"/")[[1]]
-  i <- which(parts=="carteleras")
-  if (length(i) && length(parts)>=i+1) return(parts[i+1])
-  NA_character_
+# --- Args ---------------------------------------------------------------------
+args <- commandArgs(trailingOnly = TRUE)
+get_arg <- function(flag, default=NULL){
+  hit <- which(args == flag)
+  if (length(hit) && hit < length(args)) args[hit+1] else default
 }
 
-parse_from_filename <- function(path){
-  fn <- basename(path)
-  stem <- tools::file_path_sans_ext(fn)
-  stem_lc <- tolower(stem)
+images_dir <- get_arg("--images_dir", "carteleras")
+venues_path <- get_arg("--venues_path", "data/venues.csv")
+out_dir   <- get_arg("--out_dir",   "data")
+agg_dir   <- get_arg("--agg_dir",   file.path(out_dir, "aggregations"))
 
-  # Venue_YYYYMes_N.jpg
-  m <- str_match(stem_lc, "^(.*)_((20)\\d{2})([a-záéíóúñ]{3,10})_(\\d+)$")
-  if (!all(is.na(m))) {
-    venue_raw <- m[,2]
-    yr   <- as.integer(m[,3])
-    mo_t <- gsub("[^a-záéíóúñ]","", m[,5])
-    mo   <- suppressWarnings(as.integer(month_map[mo_t]))
-    pg   <- as.integer(m[,6])
-    return(tibble(
-      image_path=path,
-      state=get_state_from_path(path),
-      venue_name=gsub("_"," ",venue_raw),
-      venue_norm=norm_name(venue_raw),
-      year=yr, month=mo, page=pg
-    ))
-  }
-  # YYYYMes_Venue_N.jpg
-  m <- str_match(stem_lc, "^((20)\\d{2})([a-záéíóúñ]{3,10})_(.*)_(\\d+)$")
-  if (!all(is.na(m))) {
-    yr   <- as.integer(m[,2])
-    mo_t <- gsub("[^a-záéíóúñ]","", m[,4])
-    mo   <- suppressWarnings(as.integer(month_map[mo_t]))
-    venue_raw <- m[,5]
-    pg   <- as.integer(m[,6])
-    return(tibble(
-      image_path=path,
-      state=get_state_from_path(path),
-      venue_name=gsub("_"," ",venue_raw),
-      venue_norm=norm_name(venue_raw),
-      year=yr, month=mo, page=pg
-    ))
-  }
-  tibble(image_path=path, state=get_state_from_path(path),
-         venue_name=NA_character_, venue_norm=NA_character_,
-         year=NA_integer_, month=NA_integer_, page=NA_integer_)
-}
-
-# --------- discover inputs ----------
-imgs <- list.files(images_dir, pattern="\\.(png|jpg|jpeg)$", recursive=TRUE, full.names=TRUE)
-message("Discovered ", length(imgs), " poster file(s) under: ", images_dir)
-if (length(imgs)) message("Example: ", paste(utils::head(imgs,3), collapse=" | "))
-if (!length(imgs)) { message("No images found under ", images_dir); quit(save="no", status=0) }
-
-if (file.exists(manifest_path)){
-  message("Using manifest at ", manifest_path)
-  meta <- readr::read_csv(manifest_path, show_col_types=FALSE) |>
-    mutate(
-      image_path=image_path,
-      venue_norm=norm_name(venue_name),
-      state=ifelse(is.na(state), get_state_from_path(image_path), state),
-      page=suppressWarnings(as.integer(page))
-    )
-} else {
-  meta <- purrr::map_dfr(imgs, parse_from_filename)
-}
-
-bad <- meta |> filter(is.na(venue_name) | is.na(year) | is.na(month))
-if (nrow(bad)) message("Skipping ", nrow(bad), " files with unrecognized names. Example: ", bad$image_path[1])
-meta <- meta |> filter(!is.na(venue_name), !is.na(year), !is.na(month)) |> rename(venue = venue_name)
-message("Parsed metadata rows (usable): ", nrow(meta))
-if (!nrow(meta)) { message("No usable filenames parsed. Exiting."); quit(save="no", status=0) }
-
-# --- WRITE venues_autofill.csv (infer state from folder path)
-dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-ven_auto <- meta %>%
-  mutate(venue_key = tolower(venue) %>% gsub("_"," ",.) %>% trimws()) %>%
-  filter(!is.na(state) & nzchar(state)) %>%
-  select(venue, venue_key, state) %>%
-  distinct()
-readr::write_csv(ven_auto, file.path(out_dir, "venues_autofill.csv"))
-
-# --- Auto-geocode missing coords (optional, harmless if file/function absent)
-if (exists("geocode_missing_venues")) {
-  try(geocode_missing_venues(venues_path), silent = TRUE)
-}
-
-# --------- run extractors ----------
-use_openai <- nzchar(Sys.getenv("OPENAI_API_KEY"))
-use_gcv    <- nzchar(Sys.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
-
-openai_events <- tibble(); ocr_raw <- tibble(); text_events <- tibble()
-
-if (use_openai && exists("extract_openai_events")) {
-  message("Running OpenAI image extraction…")
-  openai_events <- purrr::map_dfr(seq_len(nrow(meta)), function(i){
-    row <- meta[i,]
-    tryCatch(extract_openai_events(row$image_path, row$venue, row$year, row$month),
-             error=function(e){ message("OpenAI failed for ", row$image_path, ": ", e$message); tibble() })
-  })
-} else message("Skipping OpenAI image extraction (no key or extractor missing).")
-
-if (exists("extract_tesseract_text")) {
-  message("Running Tesseract OCR…")
-  ocr_raw <- purrr::map_dfr(seq_len(nrow(meta)), function(i){
-    row <- meta[i,]
-    tryCatch(extract_tesseract_text(row$image_path, NA_character_, row$venue, row$year, row$month),
-             error=function(e){ message("Tesseract failed for ", row$image_path, ": ", e$message); tibble() })
-  })
-}
-
-vision_events <- if (nrow(ocr_raw) && exists("parse_poster_events")) parse_poster_events(ocr_raw) else tibble()
-
-if (use_openai && exists("extract_openai_events_from_text") && nrow(ocr_raw)){
-  message("Running OpenAI text-only pass on OCR…")
-  text_events <- purrr::map_dfr(seq_len(nrow(ocr_raw)), function(i){
-    rr <- ocr_raw[i,]
-    tryCatch(extract_openai_events_from_text(rr$ocr_text, rr$venue, rr$year, rr$month),
-             error=function(e){ tibble() })
-  })
-}
-
-for (nm in c("event_time","event_title")) {
-  if (!nm %in% names(openai_events)) openai_events[[nm]] <- NA_character_
-  if (!nm %in% names(vision_events)) vision_events[[nm]] <- NA_character_
-  if (!nm %in% names(text_events))   text_events[[nm]]   <- NA_character_
-}
-
-all_events <- bind_rows(
-  openai_events %>% mutate(source="openai"),
-  vision_events %>% mutate(source="tesseract"),
-  text_events   %>% mutate(source="openai-text")
-) %>% distinct()
-
-clean <- if (exists("validate_events")) validate_events(all_events) else all_events
-
-# --- per-image counts for debugging
-if (nrow(clean)) {
-  per_img <- clean %>% count(source_image, name="events")
-  message("Per-image extracted events:")
-  utils::capture.output(per_img) |> paste(collapse="\n") |> message()
-}
-
-# --- weekday in Spanish
-if (nrow(clean)) {
-  clean <- clean %>% mutate(
-    weekday = c("lunes","martes","miércoles","jueves","viernes","sábado","domingo")[lubridate::wday(event_date, week_start=1)]
-  )
-}
-
-# --- join venue metadata (municipality/state + optional coordinates)
-venues <- tryCatch(readr::read_csv(venues_path, show_col_types = FALSE), error=function(e) tibble())
-if (nrow(venues)) {
-  # normalize name column to 'venue'
-  name_col <- intersect(c("venue","venue_name","name"), names(venues))
-  if (length(name_col) && name_col[1] != "venue") venues <- dplyr::rename(venues, venue = dplyr::all_of(name_col[1]))
-  venues <- venues %>% mutate(venue_key = tolower(venue) %>% gsub("_"," ",.) %>% trimws())
-  # keep whatever optional columns exist
-  keep <- intersect(c("venue_key","municipality","state","lat","lon","latitude","longitude","address"), names(venues))
-  venues_j <- venues %>% select(all_of(keep))
-} else {
-  venues_j <- tibble(venue_key=character())
-}
-
-# SAFE: add any missing optional columns so downstream mutate never errors
-for (nm in c("municipality","state","latitude","longitude","lat","lon","address")) {
-  if (!nm %in% names(venues_j)) venues_j[[nm]] <- NA
-}
-
-if (!nrow(clean)) {
-  message("No events extracted; writing empty CSV with headers.")
-  clean <- tibble(
-    venue=character(), venue_id=character(), event_date=as.Date(character()),
-    band_name=character(), event_title=character(), event_time=character(),
-    source=character(), source_image=character(), weekday=character(),
-    municipality=character(), state=character(),
-    latitude=double(), longitude=double()
-  )
-} else {
-  tmp <- clean %>%
-    mutate(venue_key = tolower(venue) %>% gsub("_"," ",.) %>% trimws()) %>%
-    left_join(venues_j, by="venue_key")
-
-  # Ensure these columns exist BEFORE coalescing (even if NA)
-  for (nm in c("latitude","longitude","lat","lon","municipality","state")) {
-    if (!nm %in% names(tmp)) tmp[[nm]] <- NA
-  }
-
-  tmp <- tmp %>%
-    mutate(
-      latitude  = suppressWarnings(as.numeric(dplyr::coalesce(.data$latitude,  .data$lat))),
-      longitude = suppressWarnings(as.numeric(dplyr::coalesce(.data$longitude, .data$lon))),
-      state     = dplyr::coalesce(.data$state, sapply(source_image, get_state_from_path))
-    ) %>%
-    select(-venue_key, -any_of(c("lat","lon"))) %>%
-    relocate(weekday, .after = event_date) %>%
-    relocate(municipality, state, .after = event_time) %>%
-    relocate(latitude, longitude, .after = state)
-
-  clean <- tmp
-}
-
-# --- write main CSV
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 dir.create(agg_dir, showWarnings = FALSE, recursive = TRUE)
-readr::write_csv(clean, file.path(out_dir, "performances_monthly.csv"))
 
-# --- aggregations
-if (exists("aggregate_all")) {
-  aggregate_all(
-    events_path = file.path(out_dir, "performances_monthly.csv"),
-    venues_path = venues_path,
-    out_dir     = agg_dir
+# --- List posters & parse filename metadata -----------------------------------
+# Expect paths like: <images_dir>/<STATE>/<Venue>_<YYYY><MesEspañol>_<n>.<ext>
+month_map <- c(
+  "enero"=1, "febrero"=2, "marzo"=3, "abril"=4, "mayo"=5, "junio"=6,
+  "julio"=7, "agosto"=8, "septiembre"=9, "setiembre"=9, "octubre"=10,
+  "noviembre"=11, "diciembre"=12
+)
+
+is_poster <- function(p) grepl("\\.(jpg|jpeg|png|pdf)$", tolower(p))
+all_files <- list.files(images_dir, recursive = TRUE, full.names = TRUE)
+poster_files <- all_files[file.info(all_files)$isdir %in% c(FALSE) & vapply(all_files, is_poster, TRUE)]
+
+if (!length(poster_files)) {
+  message("No poster files found under: ", images_dir)
+  # write empty outputs and exit cleanly
+  write_csv(tibble(venue=character(), event_date=as.Date(character()), weekday=character(),
+                   band_name=character(), event_time=character(),
+                   municipality=character(), state=character(),
+                   latitude=double(), longitude=double(), venue_id=character()),
+            file.path(out_dir, "performances_monthly.csv"))
+  write_csv(tibble(), file.path(agg_dir, "events_by_municipality.csv"))
+  write_csv(tibble(), file.path(agg_dir, "events_by_state.csv"))
+  quit(status = 0)
+}
+
+example_str <- paste(head(poster_files, 3), collapse = " | ")
+cat("Discovered", length(poster_files), "poster file(s) under:", images_dir, "\n")
+cat("Example:", example_str, "\n")
+
+parse_one <- function(p){
+  # state from first folder inside images_dir if present
+  rel <- sub(paste0("^", normalizePath(images_dir), .Platform$file.sep), "", normalizePath(p))
+  parts <- strsplit(rel, .Platform$file.sep, fixed = TRUE)[[1]]
+  state <- if (length(parts) > 1) parts[1] else NA_character_
+
+  file <- tools::file_path_sans_ext(basename(p))
+  # Split on underscores, expecting VenueName_YYYYMes_# (venue itself may contain underscores)
+  toks <- unlist(strsplit(file, "_"))
+  if (length(toks) < 3) return(NULL)
+
+  # venue may be multiple tokens; the last two are YYYYMes and num
+  ym <- toks[length(toks)-1]
+  num <- suppressWarnings(as.integer(toks[length(toks)]))
+  venue_tokens <- toks[1:(length(toks)-2)]
+  venue <- gsub("_", " ", paste(venue_tokens, collapse = "_"))
+  venue <- stringr::str_squish(venue)
+
+  # parse year + Spanish month in "YYYYMes"
+  m <- stringr::str_match(ym, "^(\\d{4})([A-Za-zÁÉÍÓÚáéíóúñÑ]+)$")
+  year <- suppressWarnings(as.integer(m[,2]))
+  mes  <- tolower(stringi::stri_trans_general(m[,3], "Latin-ASCII"))
+  month <- month_map[mes] %||% NA_integer_
+
+  tibble(
+    source_image = p,
+    state = state,
+    venue = venue,
+    year = year,
+    month = as.integer(month),
+    file_num = num %||% NA_integer_
   )
-} else message("aggregate_all() not found; skipping aggregation.")
+}
 
-message("Done.")
+meta <- purrr::map_dfr(poster_files, function(p) { tryCatch(parse_one(p), error=function(e) NULL) })
+meta <- meta %>% filter(!is.na(year), !is.na(month), nzchar(venue))
+cat("Parsed metadata rows (usable):", nrow(meta), "\n")
+
+if (!nrow(meta)) stop("No parsable filenames. Check naming convention.")
+
+# --- Load venues metadata (optional) ------------------------------------------
+venues_df <- tryCatch(readr::read_csv(venues_path, show_col_types = FALSE), error = function(e) tibble())
+# ensure expected columns exist (avoid joins failing later)
+for (nm in c("venue","municipality","state","latitude","longitude","lat","lon")) {
+  if (!nm %in% names(venues_df)) venues_df[[nm]] <- NA
+}
+
+# --- OCR function shim ---------------------------------------------------------
+get_ocr_text <- function(img){
+  # Try functions that may be defined in extract_tesseract.R
+  for (fn in c("tesseract_to_text","tesseract_ocr_text","ocr_to_text","ocr_image_text")){
+    if (exists(fn, mode = "function")) {
+      return(tryCatch(get(fn)(img), error=function(e) ""))
+    }
+  }
+  # Fallback: empty (we still might have manual overrides)
+  ""
+}
+
+# --- Extract per image (text-only + optional manual added later in validate) ---
+message("Running Tesseract OCR…")
+ocr_texts <- meta %>%
+  mutate(ocr = purrr::map_chr(source_image, get_ocr_text))
+
+message("Running OpenAI text-only pass on OCR…")
+extract_text <- function(ocr, v, y, m, src){
+  ev <- tibble()
+  if (exists("extract_openai_events_from_text", mode="function")) {
+    ev <- tryCatch(extract_openai_events_from_text(ocr, v, y, m), error=function(e) tibble())
+  } else if (exists("extract_openai_text_events", mode="function")) {
+    ev <- tryCatch(extract_openai_text_events(ocr, v, y, m), error=function(e) tibble())
+  }
+  if (nrow(ev)) ev <- ev %>% mutate(source_image = src)
+  ev
+}
+
+events_list <- purrr::pmap(meta, function(source_image, state, venue, year, month, file_num){
+  o <- ocr_texts$ocr[ocr_texts$source_image == source_image][1]
+  extract_text(o, venue, year, month, source_image)
+})
+
+events_raw <- bind_rows(events_list)
+
+# Log per-image counts safely (handle missing column)
+clean <- events_raw
+if (!"source_image" %in% names(clean)) clean$source_image <- NA_character_
+per_img <- clean %>% filter(!is.na(source_image)) %>% count(source_image, name = "events")
+cat("Per-image extracted events:\n")
+print(per_img)
+
+# --- Validate & join venue metadata (also reads per-venue manual overrides) ----
+if (!exists("validate_events", mode="function")) {
+  stop("validate.R not loaded or validate_events() not found.")
+}
+final <- validate_events(events_raw, venues_df = venues_df)
+
+# --- Write outputs -------------------------------------------------------------
+outfile <- file.path(out_dir, "performances_monthly.csv")
+readr::write_csv(final, outfile)
+cat("Wrote:", outfile, "\n")
+
+# --- Simple aggregations (safe if muni/state missing) --------------------------
+safe_col <- function(df, nm, type="chr"){
+  if (!nm %in% names(df)) {
+    df[[nm]] <- if (type == "num") NA_real_ else NA_character_
+  }
+  df
+}
+agg_in <- final %>%
+  safe_col("municipality") %>%
+  safe_col("state") %>%
+  mutate(year = year(event_date), month = month(event_date))
+
+agg_muni <- agg_in %>%
+  count(municipality, year, month, name = "events") %>%
+  arrange(municipality, year, month)
+
+agg_state <- agg_in %>%
+  count(state, year, month, name = "events") %>%
+  arrange(state, year, month)
+
+readr::write_csv(agg_muni, file.path(agg_dir, "events_by_municipality.csv"))
+readr::write_csv(agg_state, file.path(agg_dir, "events_by_state.csv"))
+cat("Wrote aggregations to:", agg_dir, "\n")
+
+cat("Done.\n")
