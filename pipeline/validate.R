@@ -4,13 +4,17 @@ suppressPackageStartupMessages({
   library(stringr)
 })
 
-# Exact headings we move from band_name -> event_title (only if it's just the heading)
-HEADING_SET <- tolower(c(
-  "miércoles de salsa","miercoles de salsa","martes de jam","jam session",
-  "miércoles de jazz","miercoles de jazz","noche de salsa","noche de jazz"
-))
+# If venue_rules.R was sourced in run_monthly.R, we can use it here
+if (!exists("VENUE_RULES")) VENUE_RULES <- list()
 
-# --- Vectorized time normalizer: returns HH:MM (24h) or NA
+norm_venue_key <- function(x){
+  x <- tolower(as.character(x))
+  x <- gsub("_", " ", x)
+  x <- gsub("\\s+", " ", x)
+  trimws(x)
+}
+
+# --- Vectorized time normalizer
 normalize_time_vec <- function(tt) {
   if (is.null(tt)) return(character(0))
   tt <- as.character(tt); if (!length(tt)) return(tt)
@@ -29,34 +33,35 @@ normalize_time_vec <- function(tt) {
   out
 }
 
-# Optional band-name correction patches (data/name_patches.csv)
+# Optional global regex/name patches (data/name_patches.csv)
 apply_name_patches <- function(df){
   pth <- file.path("data","name_patches.csv")
   if (!file.exists(pth)) return(df)
   patches <- tryCatch(readr::read_csv(pth, show_col_types = FALSE), error=function(e) tibble())
   if (!nrow(patches)) return(df)
 
+  # supports: from, to [, venue, year, month]  and/or from_rx (regex)
   norm <- function(s) tolower(gsub("\\s+"," ", trimws(as.character(s))))
-  patches <- patches %>%
-    mutate(
-      from_n = norm(from),
-      to     = as.character(to),
-      venue  = ifelse("venue" %in% names(.), as.character(venue), NA_character_),
-      year   = ifelse("year"  %in% names(.), suppressWarnings(as.integer(year)), NA_integer_),
-      month  = ifelse("month" %in% names(.), suppressWarnings(as.integer(month)), NA_integer_)
-    )
-
   df$band_name <- as.character(df$band_name)
-  bnorm <- norm(df$band_name)
-
   for (i in seq_len(nrow(patches))){
-    cond <- bnorm == patches$from_n[i]
-    if (!is.na(patches$venue[i])) cond <- cond & (tolower(df$venue) == tolower(patches$venue[i]))
-    if (!is.na(patches$year[i]))  cond <- cond & (df$year  == patches$year[i])
-    if (!is.na(patches$month[i])) cond <- cond & (df$month == patches$month[i])
-    df$band_name[cond] <- patches$to[i]
-    # refresh normalized cache for cascading patches
-    bnorm[cond] <- norm(patches$to[i])
+    to <- as.character(patches$to[i])
+    venue <- if ("venue" %in% names(patches)) as.character(patches$venue[i]) else NA_character_
+    year  <- if ("year"  %in% names(patches)) suppressWarnings(as.integer(patches$year[i]))  else NA_integer_
+    month <- if ("month" %in% names(patches)) suppressWarnings(as.integer(patches$month[i])) else NA_integer_
+
+    cond <- rep(TRUE, nrow(df))
+    if (!is.na(venue)) cond <- cond & (tolower(df$venue) == tolower(venue))
+    if (!is.na(year))  cond <- cond & (df$year  == year)
+    if (!is.na(month)) cond <- cond & (df$month == month)
+
+    if ("from_rx" %in% names(patches) && is.character(patches$from_rx[i]) && nzchar(patches$from_rx[i])) {
+      cond <- cond & grepl(patches$from_rx[i], df$band_name, perl = TRUE)
+    } else if ("from" %in% names(patches)) {
+      cond <- cond & (norm(df$band_name) == norm(patches$from[i]))
+    } else {
+      next
+    }
+    df$band_name[cond] <- to
   }
   df
 }
@@ -64,27 +69,62 @@ apply_name_patches <- function(df){
 validate_events <- function(df){
   if (!nrow(df)) return(df)
 
+  # Build allowlists from venue rules: vector of band names per venue_key
+  ALLOWED <- list()
+  if (length(VENUE_RULES)) {
+    for (vk in names(VENUE_RULES)){
+      rr <- VENUE_RULES[[vk]]$residencies
+      if (length(rr)) {
+        ab <- unique(unlist(lapply(rr, function(r) r$allowed_bands %||% character(0))))
+        if (length(ab)) ALLOWED[[vk]] <- tolower(trimws(ab))
+      }
+    }
+  }
+
   df <- df %>%
     mutate(
       band_name   = stringr::str_squish(as.character(band_name)),
       event_title = ifelse(is.na(event_title) | !nzchar(event_title), NA_character_, stringr::str_squish(event_title)),
-      band_low    = tolower(band_name) %>% gsub("[^\\p{L}\\s]", "", .) %>% gsub("\\s+", " ", .) %>% trimws(),
-
-      # Only treat as heading if the whole band_name is an exact known heading
-      is_exact_heading = band_low %in% HEADING_SET,
-
-      event_title = dplyr::coalesce(event_title, ifelse(is_exact_heading, band_name, NA_character_)),
-      band_name   = ifelse(is_exact_heading, NA_character_, band_name),
-
-      # Normalize times
-      event_time  = normalize_time_vec(event_time)
+      event_time  = normalize_time_vec(event_time),
+      venue_key   = norm_venue_key(venue),
+      has_title   = !is.na(event_title) & nzchar(event_title),
+      # Prefer rows that look like well-parsed residencies:
+      pref_rank   = dplyr::case_when(
+                      has_title & source == "tesseract"   ~ 3L,  # our rules live on this path
+                      has_title & source == "openai-text" ~ 2L,
+                      has_title                            ~ 1L,
+                      TRUE                                 ~ 0L
+                    )
     ) %>%
-    filter(!is.na(band_name) & nzchar(band_name)) %>%
-    select(-band_low) %>%
-    arrange(source) %>%
-    distinct(venue, event_date, band_name, event_time, .keep_all = TRUE)
+    arrange(desc(pref_rank), source)
 
-  # Apply optional manual patches (e.g., Explosión -> Exploración)
+  # Drop bogus Salsa-Wednesday rows for venues with an allowlist
+  if (length(ALLOWED)) {
+    df <- df %>%
+      mutate(
+        weekday_num = lubridate::wday(event_date, week_start = 1),
+        et_low      = tolower(coalesce(event_title, "")),
+        band_low    = tolower(band_name)
+      ) %>%
+      rowwise() %>%
+      mutate(keep = {
+        ab <- ALLOWED[[venue_key]]
+        if (is.null(ab)) TRUE else {
+          # Only enforce allowlist on Wednesdays and when title mentions Salsa
+          if (weekday_num == 3 && grepl("salsa", et_low)) band_low %in% ab else TRUE
+        }
+      }) %>%
+      ungroup() %>%
+      filter(keep) %>%
+      select(-keep, -weekday_num, -et_low, -band_low)
+  }
+
+  # Deduplicate across sources AFTER ranking
+  df <- df %>%
+    distinct(venue, event_date, band_name, event_time, .keep_all = TRUE) %>%
+    select(-venue_key, -has_title, -pref_rank)
+
+  # Apply global regex/name patches at the end (e.g., Explosión -> Exploración)
   df <- apply_name_patches(df)
   df
 }
