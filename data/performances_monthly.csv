@@ -1,30 +1,39 @@
 venue,venue_id,event_date,weekday,band_name,event_title,event_time,municipality,state,latitude,longitude,source,source_image,address
-jazzatlan cholula,NA,2024-01-02,martes,NA,Martes de Jam,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-09,martes,NA,Martes de Jam,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-16,martes,NA,Martes de Jam,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-23,martes,NA,Martes de Jam,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-30,martes,NA,Martes de Jam,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-02,martes,NA,Martes de Jam,NA,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-09,martes,NA,Martes de Jam,NA,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-16,martes,NA,Martes de Jam,NA,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-23,martes,NA,Martes de Jam,NA,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-30,martes,NA,Martes de Jam,NA,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
 jazzatlan cholula,NA,2024-01-03,miércoles,NA,Miércoles de Salsa,NA,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
 jazzatlan cholula,NA,2024-01-10,miércoles,NA,Miércoles de Salsa,NA,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
 jazzatlan cholula,NA,2024-01-17,miércoles,NA,Miércoles de Salsa,NA,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
 jazzatlan cholula,NA,2024-01-24,miércoles,NA,Miércoles de Salsa,NA,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
 jazzatlan cholula,NA,2024-01-31,miércoles,NA,Miércoles de Salsa,NA,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-07,domingo,Soneros Son,Soneros Son,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-31,miércoles,Soneros Son,Soneros Son,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-19,viernes,Orquesta Explosión Latina,Orquesta Explosión Latina,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-24,miércoles,Orquesta Explosión Latina,Orquesta Explosión Latina,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-07,domingo,Soneros Son,Son,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-31,miércoles,Soneros Son,Son,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-10,miércoles,Orquesta Explosión Latina,Salsa,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-24,miércoles,Orquesta Explosión Latina,Salsa,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-11,jueves,Silky,"Funk, Blues",21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-12,viernes,Ricardo Arenas Trío,Jazz,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-13,sábado,Lengua Gitana,Flamenco,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-14,domingo,Tesauro Trío,Jazz,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-18,jueves,The Mother Tongue,Blues & Rock and Roll,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-19,viernes,Los Músicos de José,"Acid Jazz, Funk, Hip Hop Original",21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-20,sábado,Talaverita de Toledo,Flamenco,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-21,domingo,Ramones Gopal,Folk,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-25,jueves,Cóyotl Trío,Jazz,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-26,viernes,Aerofon,Funk,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-27,sábado,El Comité del Funk,Funk,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
+jazzatlan cholula,NA,2024-01-28,domingo,Samuel Piña Dueto,Jazz,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
 jazzatlan cholula,NA,2024-02-06,martes,Jam,Martes de Jam,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-13,martes,Jam,Martes de Jam,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-20,martes,Jam,Martes de Jam,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-27,martes,Jam,Martes de Jam,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-07,miércoles,Soneros Son,Miércoles de Salsa,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-14,miércoles,Orquesta La Inmigración,Miércoles de Salsa,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-21,miércoles,Soneros Son,Miércoles de Salsa,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-28,miércoles,Orquesta La Inmigración,Miércoles de Salsa,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-07,miércoles,Soneros Son,Miércoles de Salsa,20:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
 jazzatlan cholula,NA,2024-02-10,sábado,Fer Ruvel Funk Night,"Funk, Soul, Blues",21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-14,miércoles,Jazzatlán Big Band,Valentine's Jazz Day,20:30,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-22,jueves,Tolztoi,Jazz Fusion,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-24,sábado,Emmanuel Chopis Quartet,Latin Jazz,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-13,martes,Jam,Martes de Jam,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-14,miércoles,Jazzatlán Big Band,Valentine's Jazz Day,20:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-20,martes,Jam,Martes de Jam,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-21,miércoles,Orquesta Inmigrante,Miércoles de Salsa,20:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-27,martes,Jam,Martes de Jam,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-28,miércoles,Soneros Son,Miércoles de Salsa,20:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
 jazzatlan cholula,NA,2024-02-29,jueves,Silky,"Funk, Blues",21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
 mendrugo,NA,2024-04-06,sábado,VOZ Y PIANO,Con sabor a México,14:30,Puebla,Puebla,19.041841,-98.198322,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,NA
 mendrugo,NA,2024-04-13,sábado,ALE FERNÁNDEZ,Piano Solo,NA,Puebla,Puebla,19.041841,-98.198322,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,NA
@@ -40,7 +49,7 @@ mendrugo,NA,2024-04-21,domingo,ABEL QUIROZ,Piano Solo,NA,Puebla,Puebla,19.041841
 mendrugo,NA,2024-04-28,domingo,ABEL QUIROZ,Piano Solo,NA,Puebla,Puebla,19.041841,-98.198322,openai,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,NA
 mendrugo,NA,2024-04-04,jueves,Croon4You,A Crooner Evening: Jazz Standards,21:00,Puebla,Puebla,19.041841,-98.198322,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,NA
 mendrugo,NA,2024-04-11,jueves,Concierto de Conciertos,Clásico 3,21:00,Puebla,Puebla,19.041841,-98.198322,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,NA
-mendrugo,NA,2024-04-18,jueves,Salvador Beltrán & Ma. Cuspínera,Paisaje a dos voces,21:00,Puebla,Puebla,19.041841,-98.198322,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,NA
+mendrugo,NA,2024-04-18,jueves,Salvador Beltrán & Ma. Cuspineda,Paisaje a dos voces,21:00,Puebla,Puebla,19.041841,-98.198322,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,NA
 mendrugo,NA,2024-04-25,jueves,Abel Quiroz & Mauricio Arroniz,Del alma de un tenor,21:00,Puebla,Puebla,19.041841,-98.198322,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,NA
 mendrugo,NA,2024-04-05,viernes,Evil Ways,Oldies & Goldies,21:00,Puebla,Puebla,19.041841,-98.198322,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,NA
 mendrugo,NA,2024-04-12,viernes,The Jockers Blues Band,Noches de Blues,21:00,Puebla,Puebla,19.041841,-98.198322,openai,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,NA
@@ -89,33 +98,23 @@ mendrugo,NA,2024-03-10,domingo,Abel Quiroz,Piano Solo,10:30,Puebla,Puebla,19.041
 mendrugo,NA,2024-03-17,domingo,Abel Quiroz,Piano Solo,10:30,Puebla,Puebla,19.041841,-98.198322,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,NA
 mendrugo,NA,2024-03-24,domingo,Abel Quiroz,Piano Solo,10:30,Puebla,Puebla,19.041841,-98.198322,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,NA
 mendrugo,NA,2024-03-31,domingo,Abel Quiroz,Piano Solo,10:30,Puebla,Puebla,19.041841,-98.198322,openai,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,NA
-jazzatlan cholula,NA,2024-01-11,jueves,Silky,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-12,viernes,Ricardo Arenas Trío,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-13,sábado,Lengua Gitana,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-14,domingo,Tesauro Trío,NA,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-18,jueves,The Mother Tongue,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-19,viernes,Los Músicos de José,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-20,sábado,Talaverita de Toledo,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-21,domingo,Ramones Gopal,NA,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-25,jueves,Cóyotl Trío,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-26,viernes,Aerofon,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-27,sábado,El Comité del Funk,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-01-28,domingo,Samuel Piña Dueto,NA,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,NA
-jazzatlan cholula,NA,2024-02-03,sábado,Organ & Drums,NA,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-10,sábado,Organ & Drums,NA,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-17,sábado,Organ & Drums,NA,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-24,sábado,Organ & Drums,NA,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
 jazzatlan cholula,NA,2024-02-01,jueves,Wiso Castillo Cuarteto,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
 jazzatlan cholula,NA,2024-02-02,viernes,Eray Farrera Quartet,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
 jazzatlan cholula,NA,2024-02-03,sábado,Cuarteto Yacon,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
 jazzatlan cholula,NA,2024-02-04,domingo,Mr. Rabbit,NA,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
 jazzatlan cholula,NA,2024-02-08,jueves,Adrián Murguía Blues Trio,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
 jazzatlan cholula,NA,2024-02-09,viernes,Lengua Gitana,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-11,domingo,Cóyotl Trio,NA,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-11,domingo,Cóyotl Trio,NA,19:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
 jazzatlan cholula,NA,2024-02-15,jueves,Pablo Loaiza Jazz Funk Quartet,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
 jazzatlan cholula,NA,2024-02-16,viernes,El Comité del Funk,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
 jazzatlan cholula,NA,2024-02-17,sábado,Talaverita de Toledo,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-18,domingo,Tesauro Trio,NA,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-18,domingo,Tesauro Trio,NA,19:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-22,jueves,Tolztoi,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
 jazzatlan cholula,NA,2024-02-23,viernes,Jerry Montana Funky Party,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
-jazzatlan cholula,NA,2024-02-25,domingo,JC Blues,NA,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-24,sábado,Emmanuel Chopis Quartet,NA,21:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-25,domingo,JC Blues,NA,19:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-03,sábado,Organ & Drums,NA,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-10,sábado,Organ & Drums,NA,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-17,sábado,Organ & Drums,NA,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
+jazzatlan cholula,NA,2024-02-24,sábado,Organ & Drums,NA,18:00,San Pedro Cholula,Puebla,NA,NA,openai,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,NA
 mendrugo,NA,2024-03-21,jueves,Salvador Beltran,NA,21:00,Puebla,Puebla,19.041841,-98.198322,openai,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,NA
