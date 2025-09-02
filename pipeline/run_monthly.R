@@ -1,5 +1,5 @@
 # pipeline/run_monthly.R
-# v1.4.3 minimal + per-venue overrides + source_image-safe + debug_dir support
+# v1.5.0 Vision-first (auto-detect) + minimal OpenAI text pass + manual overrides + debug
 
 suppressPackageStartupMessages({
   library(readr)
@@ -10,16 +10,17 @@ suppressPackageStartupMessages({
   library(cli)
   library(glue)
   library(purrr)
+  library(tibble)
 })
 
-cli::cli_h1(">> run_monthly v1.4.3 (minimal + per-venue overrides + source_image-safe + debug)")
+cli::cli_h1(">> run_monthly v1.5.0 (Vision-first + minimal + overrides + debug)")
 
 # ---- Args ----
 # --images_dir <dir>
 # --venues_path <file>
 # --out_dir <dir>
 # --agg_dir <dir>
-# --debug_dir <dir>    (optional; when present, raw OCR text & env dump are saved)
+# --debug_dir <dir>    (optional)
 
 args <- commandArgs(trailingOnly = TRUE)
 get_arg <- function(flag, default = NULL) {
@@ -29,13 +30,12 @@ get_arg <- function(flag, default = NULL) {
   args[i + 1]
 }
 
-images_dir <- get_arg("--images_dir", "../carteleras")
+images_dir  <- get_arg("--images_dir", "../carteleras")
 venues_path <- get_arg("--venues_path", "data/venues.csv")
-out_dir <- get_arg("--out_dir", "data")
-agg_dir <- get_arg("--agg_dir", "data/aggregations")
-debug_dir <- get_arg("--debug_dir", NULL)
+out_dir     <- get_arg("--out_dir", "data")
+agg_dir     <- get_arg("--agg_dir", "data/aggregations")
+debug_dir   <- get_arg("--debug_dir", NULL)
 
-# Ensure directories
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 dir.create(agg_dir, showWarnings = FALSE, recursive = TRUE)
 if (!is.null(debug_dir)) dir.create(debug_dir, showWarnings = FALSE, recursive = TRUE)
@@ -43,8 +43,11 @@ if (!is.null(debug_dir)) dir.create(debug_dir, showWarnings = FALSE, recursive =
 # Wire up debug option for downstream scripts
 if (!is.null(debug_dir)) {
   options(mapa.debug_dir = debug_dir)
-  # Save env snapshot for OCR knobs
+  # Save env snapshot for OCR/LLM knobs
   envdump <- c(
+    sprintf("OCR_PROVIDER=%s", Sys.getenv("OCR_PROVIDER")),
+    sprintf("GCP_VISION_API_KEY=%s", ifelse(nzchar(Sys.getenv("GCP_VISION_API_KEY")),"set","")),
+    sprintf("GOOGLE_APPLICATION_CREDENTIALS=%s", Sys.getenv("GOOGLE_APPLICATION_CREDENTIALS")),
     sprintf("OCR_LANGS=%s", Sys.getenv("OCR_LANGS")),
     sprintf("OCR_DPI=%s", Sys.getenv("OCR_DPI")),
     sprintf("OCR_MIN_WIDTH=%s", Sys.getenv("OCR_MIN_WIDTH")),
@@ -56,31 +59,17 @@ if (!is.null(debug_dir)) {
 }
 
 # ---- Discover poster files ----
-is_poster <- function(x) {
-  grepl("\\.(jpg|jpeg|png|pdf)$", x, ignore.case = TRUE)
-}
+is_poster <- function(x) grepl("\\.(jpg|jpeg|png|pdf)$", x, ignore.case = TRUE)
 poster_paths <- list.files(images_dir, pattern = NULL, recursive = TRUE, full.names = TRUE)
 poster_paths <- poster_paths[is_poster(poster_paths)]
 
 cli::cli_alert_info("Discovered {length(poster_paths)} poster file(s) under: {images_dir}")
-if (length(poster_paths) > 0) {
-  eg <- head(poster_paths, 3)
-  cli::cli_alert_info("Example: {paste(eg, collapse=' | ')}")
-}
+if (length(poster_paths) > 0) cli::cli_alert_info("Example: {paste(head(poster_paths, 3), collapse=' | ')}")
 
 # ---- Parse filename metadata (Venue_YYYYMesEspañol_n.ext) ----
-# Returns tibble: source_image, venue_guess, year, month_name_es, file_num
 parse_filename <- function(path) {
   b <- basename(path)
-  # Example: Jazzatlan_Cholula_2024Enero_1.jpeg  OR  Mendrugo_2024Marzo_2.jpg
-  # Accept both with/without municipality in middle chunk
-  m <- str_match(b, "^(.+?)_(\\d{4})([A-Za-zñÑ]+)_(\\d+)\\.(jpg|jpeg|png|pdf)$")
-  if (is.na(m[1,1])) {
-    # Try with venue_muni form: Venue_Municipio_YYYYMes_#
-    m2 <- str_match(b, "^(.+?)_(\\d{4})([A-Za-zñÑ]+)_(\\d+)\\.(jpg|jpeg|png|pdf)$")
-    # (regex is identical here; kept for readability if you later add a variant)
-    m <- m2
-  }
+  m <- stringr::str_match(b, "^(.+?)_(\\d{4})([A-Za-zñÑ]+)_(\\d+)\\.(jpg|jpeg|png|pdf)$")
   if (is.na(m[1,1])) {
     return(tibble(source_image = path, venue_guess = NA_character_,
                   year = NA_integer_, month_name_es = NA_character_, file_num = NA_integer_))
@@ -93,37 +82,82 @@ parse_filename <- function(path) {
     file_num = as.integer(m[1,5])
   )
 }
-
-meta_df <- map_df(poster_paths, parse_filename)
-
+meta_df <- purrr::map_df(poster_paths, parse_filename)
 usable_meta <- meta_df %>% filter(!is.na(venue_guess), !is.na(year))
 cli::cli_alert_info("Parsed metadata rows (usable): {nrow(usable_meta)}")
 
-# ---- OCR stage ----
-source("pipeline/extract_tesseract.R")
-ocr_df <- extract_tesseract(usable_meta$source_image)
+# ---- Provider selection ----
+provider_env <- tolower(Sys.getenv("OCR_PROVIDER", unset = ""))
+has_vision   <- nzchar(Sys.getenv("GCP_VISION_API_KEY")) || nzchar(Sys.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
 
-# ---- Minimal text extractor (OpenAI text-only on OCR text) ----
-# This file is assumed to exist in your repo. We don't change its logic here,
-# but we *do* print its version banner and rely on it to be minimal & omit-if-unsure.
-source("pipeline/extract_openai_text.R")
-cli::cli_alert_info("[extract_openai_text.R] v2025-09-02 minimal (band+date+time only)")
+provider <- dplyr::case_when(
+  provider_env %in% c("vision","tesseract","auto") ~ provider_env,
+  has_vision ~ "vision",
+  TRUE ~ "tesseract"
+)
 
-# OPTIONAL GUARD: if OCR text is too short, skip LLM call for that row
+cli::cli_alert_info("OCR provider selection: {provider} (env OCR_PROVIDER='{provider_env}', vision_cred={has_vision})")
+
+# ---- OCR functions (load as needed) ----
 min_chars <- as.integer(Sys.getenv("MIN_OCR_CHARS_FOR_LLM", unset = "120"))
 if (!is.null(debug_dir)) writeLines(sprintf("MIN_OCR_CHARS_FOR_LLM=%s", min_chars), file.path(debug_dir, "env_llm.txt"))
 
-ocr_df <- ocr_df %>%
-  mutate(use_llm = nchar(ocr_text) >= min_chars)
+run_tesseract <- function(paths) {
+  source("pipeline/extract_tesseract.R")
+  extract_tesseract(paths)
+}
 
-# Call your minimal extractor only on rows with enough text
+run_vision <- function(paths) {
+  source("pipeline/extract_google_vision.R")
+  extract_google_vision(paths, language_hints = c("es","en"), feature = "DOCUMENT_TEXT_DETECTION")
+}
+
+# ---- Execute OCR based on provider ----
+ocr_df <- tibble(source_image = character(), ocr_text = character(), psm_used = NA_integer_)
+
+if (provider == "vision") {
+  cli::cli_h2("OCR via Google Vision (primary)")
+  ocr_df <- run_vision(usable_meta$source_image)
+  # harmonize columns
+  if (!"psm_used" %in% names(ocr_df)) ocr_df$psm_used <- NA_integer_
+
+} else if (provider == "tesseract") {
+  cli::cli_h2("OCR via Tesseract (primary)")
+  ocr_df <- run_tesseract(usable_meta$source_image)
+
+} else { # auto
+  cli::cli_h2("OCR auto: Tesseract -> Vision for short texts")
+  tes <- run_tesseract(usable_meta$source_image)
+  need_boost <- tes %>% mutate(n = nchar(ocr_text)) %>% filter(n < min_chars)
+  if (nrow(need_boost) > 0 && has_vision) {
+    vis <- run_vision(need_boost$source_image)
+    # prefer whichever yields longer text
+    tes <- tes %>%
+      left_join(vis %>% select(source_image, ocr_text_vis = ocr_text), by = "source_image") %>%
+      mutate(ocr_text = ifelse(nchar(coalesce(ocr_text_vis, "")) > nchar(coalesce(ocr_text, "")),
+                               ocr_text_vis, ocr_text)) %>%
+      select(-ocr_text_vis)
+  }
+  ocr_df <- tes
+}
+
+# ---- Minimal OpenAI text-only extractor on OCR text ----
+source("pipeline/extract_openai_text.R")
+cli::cli_alert_info("[extract_openai_text.R] v2025-09-02 minimal (band+date+time only)")
+
+ocr_df <- ocr_df %>% mutate(use_llm = nchar(ocr_text) >= min_chars)
 llm_in  <- ocr_df %>% filter(use_llm) %>% select(source_image, ocr_text)
+
 if (nrow(llm_in) == 0) {
   cli::cli_alert_warning("All OCR texts are below threshold ({min_chars} chars). LLM text-only pass will be skipped.")
-  extracted_events <- tibble(source_image = character(), event_date = as.Date(character()), band_name = character(), event_time = character())
+  extracted_events <- tibble(source_image = character(),
+                             event_date = as.Date(character()),
+                             band_name = character(),
+                             event_time = character())
 } else {
-  extracted_events <- extract_openai_text(llm_in)  # must return: source_image, date/band/time cols
-  # Ensure expected names (be lenient to schema keys)
+  extracted_events <- extract_openai_text(llm_in)
+
+  # Normalize expected column names
   possible_date_cols <- c("event_date", "date")
   possible_band_cols <- c("band_name", "band")
   possible_time_cols <- c("event_time", "time", "hora")
@@ -142,13 +176,12 @@ if (nrow(llm_in) == 0) {
   }
 }
 
-# Join back non-LLM rows as blanks (so we can count per-image)
+# Keep one row per source_image even if empty, for per-image counts
 all_extracted <- ocr_df %>%
   select(source_image) %>%
   distinct() %>%
   left_join(extracted_events, by = "source_image")
 
-# ---- Log per-image counts ----
 per_image_counts <- all_extracted %>%
   group_by(source_image) %>%
   summarise(events = sum(!is.na(event_date) & nzchar(coalesce(band_name, ""))), .groups = "drop")
@@ -156,30 +189,23 @@ per_image_counts <- all_extracted %>%
 cli::cli_alert_info("Per-image extracted events:")
 print(per_image_counts, n = nrow(per_image_counts))
 
-# ---- Validation / manual overrides / joins ----
+# ---- Validation / merges / outputs ----
 source("pipeline/validate.R")
 cli::cli_alert_info("[validate.R] v2025-09-02 minimal + per-venue manual overrides + safe-venue-cols")
 
-# validate() is expected to accept:
-#  - extracted (with source_image, event_date, band_name, event_time)
-#  - meta_df (for venue parsing)
-#  - venues_path (for joins)
-#  - images_dir (for relative paths if needed)
 validated <- validate(
-  extracted = all_extracted,
-  meta = usable_meta,
+  extracted   = all_extracted,
+  meta        = usable_meta,
   venues_path = venues_path,
-  images_dir = images_dir
+  images_dir  = images_dir
 )
 
-# ---- Write outputs ----
 perf_path <- file.path(out_dir, "performances_monthly.csv")
 write_csv(validated$performances, perf_path)
 cli::cli_alert_success("Wrote: {perf_path}")
 
-# Aggregations
 dir.create(agg_dir, showWarnings = FALSE, recursive = TRUE)
-agg_muni_path <- file.path(agg_dir, "events_by_municipality.csv")
+agg_muni_path  <- file.path(agg_dir, "events_by_municipality.csv")
 agg_state_path <- file.path(agg_dir, "events_by_state.csv")
 write_csv(validated$agg_municipality, agg_muni_path)
 write_csv(validated$agg_state,       agg_state_path)
