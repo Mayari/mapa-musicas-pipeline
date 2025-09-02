@@ -1,5 +1,5 @@
 # pipeline/extract_tesseract.R
-# v2025-09-02 robust (spa+eng, preprocess, multi-psm) + defaults + debug dumps
+# v2025-09-02a robust (spa+eng, preprocess, multi-psm) + defaults + debug dumps
 
 suppressPackageStartupMessages({
   library(magick)
@@ -23,7 +23,7 @@ dpi       <- suppressWarnings(as.integer(if (nzchar(dpi_env)) dpi_env else "350"
 min_width <- suppressWarnings(as.integer(if (nzchar(min_width_env)) min_width_env else "1400"))
 psms      <- suppressWarnings(as.integer(strsplit(if (nzchar(psms_env)) psms_env else "6,4,3", ",")[[1]]))
 
-cli::cli_h1("[extract_tesseract.R] v2025-09-02 robust (spa+eng, preprocess, multi-psm)")
+cli::cli_h1("[extract_tesseract.R] v2025-09-02a robust (spa+eng, preprocess, multi-psm)")
 cli::cli_alert_info("Effective OCR settings: langs={langs} dpi={dpi} min_width={min_width} psms={paste(psms, collapse=',')}")
 
 if (!nzchar(Sys.getenv("OCR_LANGS")))     cli::cli_alert_warning("OCR_LANGS empty; defaulting to {langs}")
@@ -38,12 +38,16 @@ if (!nzchar(Sys.getenv("OCR_PSMS")))      cli::cli_alert_warning("OCR_PSMS empty
 
 # Preprocess image for better OCR
 .preprocess_image <- function(path, min_width, dpi) {
-  img <- image_read(path)
+  # If density helps with vector/PDF or small rasters, pass here; otherwise image_read works fine.
+  img <- tryCatch(
+    image_read(path, density = paste0(dpi, "x", dpi)),
+    error = function(e) image_read(path)
+  )
 
-  # Convert to grayscale, increase contrast slightly, deskew
+  # Convert to grayscale, orient based on EXIF, slight contrast, deskew
   img <- img |>
     image_quantize(colorspace = "gray") |>
-    image_auto_orient() |>
+    image_orient() |>                 # <-- correct magick function
     image_contrast(sharpen = 1L) |>
     image_deskew(threshold = "40%")
 
@@ -54,9 +58,6 @@ if (!nzchar(Sys.getenv("OCR_PSMS")))      cli::cli_alert_warning("OCR_PSMS empty
     img <- image_resize(img, geometry = glue::glue("{scale_percent}%"))
   }
 
-  # Set density (dpi) for better OCR glyph shapes
-  img <- image_density(img, paste0(dpi, "x", dpi))
-
   # Light unsharp mask (helps small fonts)
   img <- image_unsharp_mask(img, radius = 1, sigma = 0.5, amount = 0.8, threshold = 0.02)
 
@@ -65,13 +66,10 @@ if (!nzchar(Sys.getenv("OCR_PSMS")))      cli::cli_alert_warning("OCR_PSMS empty
 
 # Run Tesseract with multiple PSMs, pick the best by text length
 .ocr_multi_psm <- function(img, langs, psms) {
-  # Ensure languages are available; if not, tesseract() still tries best effort
   engine <- tesseract(language = langs)
   best <- list(text = "", psm = NA_integer_)
-
   for (p in psms) {
     txt <- tryCatch({
-      # supply PSM via options
       ocr(image = img, engine = engine, options = list(psm = as.integer(p)))
     }, error = function(e) "")
     if (nzchar(txt) && nchar(txt) > nchar(best$text)) {
@@ -82,7 +80,7 @@ if (!nzchar(Sys.getenv("OCR_PSMS")))      cli::cli_alert_warning("OCR_PSMS empty
   best
 }
 
-# ---- Public function used by run_monthly.R ----
+# ---- Public function ----
 extract_tesseract <- function(image_paths) {
   if (length(image_paths) == 0) {
     cli::cli_alert_warning("extract_tesseract: No image paths given.")
