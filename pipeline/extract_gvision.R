@@ -1,8 +1,9 @@
-# pipeline/extract_google_vision.R
+# pipeline/extract_gvision.R
 # Google Vision OCR helper for MAPA músicas
 # - Prefers API key via env GCP_VISION_API_KEY
 # - Falls back to OAuth service account via GOOGLE_APPLICATION_CREDENTIALS
 # - Returns tibble: source_image, ocr_text
+# - Exports BOTH names: extract_gvision() and extract_google_vision() for compatibility.
 
 suppressPackageStartupMessages({
   library(httr2)
@@ -12,6 +13,8 @@ suppressPackageStartupMessages({
   library(tibble)
   library(purrr)
 })
+
+`%||%` <- function(a, b) if (!is.null(a)) a else b
 
 .gv_get_auth <- function() {
   key <- Sys.getenv("GCP_VISION_API_KEY", "")
@@ -32,9 +35,9 @@ suppressPackageStartupMessages({
   }
 }
 
-# feature: "TEXT_DETECTION" or "DOCUMENT_TEXT_DETECTION"
-extract_google_vision <- function(image_paths, language_hints = c("es","en"),
-                                  feature = "DOCUMENT_TEXT_DETECTION") {
+# Core implementation (returns tibble: source_image, ocr_text)
+.gvision_impl <- function(image_paths, language_hints = c("es","en"),
+                          feature = "DOCUMENT_TEXT_DETECTION") {
   if (length(image_paths) == 0) return(tibble(source_image = character(), ocr_text = character()))
   auth <- .gv_get_auth()
 
@@ -94,3 +97,10 @@ extract_google_vision <- function(image_paths, language_hints = c("es","en"),
 
   results
 }
+
+# Public names (both)
+extract_gvision <- function(image_paths, language_hints = c("es","en"),
+                            feature = "DOCUMENT_TEXT_DETECTION") {
+  .gvision_impl(image_paths, language_hints, feature)
+}
+extract_google_vision <- extract_gvision
