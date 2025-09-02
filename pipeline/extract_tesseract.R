@@ -1,80 +1,119 @@
+# pipeline/extract_tesseract.R
+# v2025-09-02 robust (spa+eng, preprocess, multi-psm) + defaults + debug dumps
+
 suppressPackageStartupMessages({
-  library(tesseract)
   library(magick)
-  library(tidyverse)
+  library(tesseract)
+  library(stringr)
+  library(cli)
+  library(glue)
+  library(purrr)
+  library(tibble)
+  library(dplyr)
 })
 
-message("[extract_tesseract.R] v2025-09-02 robust (spa+eng, preprocess, multi-psm)")
+# ---- Read OCR settings from env with SAFE DEFAULTS ----
+langs_env     <- Sys.getenv("OCR_LANGS",     unset = "spa+eng")
+dpi_env       <- Sys.getenv("OCR_DPI",       unset = "350")
+min_width_env <- Sys.getenv("OCR_MIN_WIDTH", unset = "1400")
+psms_env      <- Sys.getenv("OCR_PSMS",      unset = "6,4,3")
 
-OCR_LANGS     <- Sys.getenv("OCR_LANGS");     if (!nzchar(OCR_LANGS))     OCR_LANGS <- "spa+eng"
-OCR_DPI       <- suppressWarnings(as.integer(Sys.getenv("OCR_DPI")));       if (is.na(OCR_DPI))       OCR_DPI <- 350
-OCR_MIN_WIDTH <- suppressWarnings(as.integer(Sys.getenv("OCR_MIN_WIDTH"))); if (is.na(OCR_MIN_WIDTH)) OCR_MIN_WIDTH <- 1400
-OCR_PSMS      <- Sys.getenv("OCR_PSMS");      if (!nzchar(OCR_PSMS))      OCR_PSMS <- "6,4,3"
-OCR_PSMS      <- as.integer(strsplit(OCR_PSMS, ",")[[1]])
+langs     <- if (nzchar(langs_env)) langs_env else "spa+eng"
+dpi       <- suppressWarnings(as.integer(if (nzchar(dpi_env)) dpi_env else "350"))
+min_width <- suppressWarnings(as.integer(if (nzchar(min_width_env)) min_width_env else "1400"))
+psms      <- suppressWarnings(as.integer(strsplit(if (nzchar(psms_env)) psms_env else "6,4,3", ",")[[1]]))
 
-# ---- Preprocess image for better OCR -----------------------------------------
-.prep_image <- function(path) {
-  # Read with density for PDFs and raster; auto-orient
-  img <- tryCatch(image_read(path, density = OCR_DPI), error = function(e) image_read(path))
-  img <- image_auto_orient(img)
+cli::cli_h1("[extract_tesseract.R] v2025-09-02 robust (spa+eng, preprocess, multi-psm)")
+cli::cli_alert_info("Effective OCR settings: langs={langs} dpi={dpi} min_width={min_width} psms={paste(psms, collapse=',')}")
 
-  # If multi-page (PDF), keep all frames
+if (!nzchar(Sys.getenv("OCR_LANGS")))     cli::cli_alert_warning("OCR_LANGS empty; defaulting to {langs}")
+if (!nzchar(Sys.getenv("OCR_DPI")))       cli::cli_alert_warning("OCR_DPI empty; defaulting to {dpi}")
+if (!nzchar(Sys.getenv("OCR_MIN_WIDTH"))) cli::cli_alert_warning("OCR_MIN_WIDTH empty; defaulting to {min_width}")
+if (!nzchar(Sys.getenv("OCR_PSMS")))      cli::cli_alert_warning("OCR_PSMS empty; defaulting to {paste(psms, collapse=',')}")
+
+# Optional debug directory is passed via option set in run_monthly.R
+.debug_dir <- getOption("mapa.debug_dir", default = NULL)
+
+# ---- Helpers ----
+
+# Preprocess image for better OCR
+.preprocess_image <- function(path, min_width, dpi) {
+  img <- image_read(path)
+
+  # Convert to grayscale, increase contrast slightly, deskew
+  img <- img |>
+    image_quantize(colorspace = "gray") |>
+    image_auto_orient() |>
+    image_contrast(sharpen = 1L) |>
+    image_deskew(threshold = "40%")
+
+  # Ensure minimum width (scale up if needed)
   info <- image_info(img)
+  if (info$width < min_width) {
+    scale_percent <- ceiling((min_width / info$width) * 100)
+    img <- image_resize(img, geometry = glue::glue("{scale_percent}%"))
+  }
 
-  # Convert to grayscale, upscale if narrow, clean up
-  upscale_one <- function(frame) {
-    fr_info <- image_info(frame)
-    if (fr_info$width[1] < OCR_MIN_WIDTH) {
-      frame <- image_resize(frame, paste0(OCR_MIN_WIDTH, "x"))
+  # Set density (dpi) for better OCR glyph shapes
+  img <- image_density(img, paste0(dpi, "x", dpi))
+
+  # Light unsharp mask (helps small fonts)
+  img <- image_unsharp_mask(img, radius = 1, sigma = 0.5, amount = 0.8, threshold = 0.02)
+
+  img
+}
+
+# Run Tesseract with multiple PSMs, pick the best by text length
+.ocr_multi_psm <- function(img, langs, psms) {
+  # Ensure languages are available; if not, tesseract() still tries best effort
+  engine <- tesseract(language = langs)
+  best <- list(text = "", psm = NA_integer_)
+
+  for (p in psms) {
+    txt <- tryCatch({
+      # supply PSM via options
+      ocr(image = img, engine = engine, options = list(psm = as.integer(p)))
+    }, error = function(e) "")
+    if (nzchar(txt) && nchar(txt) > nchar(best$text)) {
+      best$text <- txt
+      best$psm  <- p
     }
-    frame <- image_convert(frame, colorspace = "gray")
-    frame <- image_enhance(frame)
-    frame <- image_normalize(frame)
-    # light deskew; ignore errors if not supported in build
-    frame <- tryCatch(image_deskew(frame, threshold = 40), error = function(e) frame)
-    frame
   }
-
-  if (length(img) > 1) {
-    image_join(lapply(seq_along(img), function(i) upscale_one(img[i])) )
-  } else {
-    upscale_one(img)
-  }
+  best
 }
 
-# ---- OCR with multiple PSM attempts; bail once we have enough text -----------
-.tess_once <- function(image, psm) {
-  eng <- try(tesseract(language = OCR_LANGS,
-                       options  = list(tessedit_pageseg_mode = as.integer(psm))),
-             silent = TRUE)
-  if (inherits(eng, "try-error")) return("")
-
-  if (length(image) > 1) {
-    paste(vapply(seq_len(length(image)),
-                 function(i) ocr(image[i], engine = eng),
-                 FUN.VALUE = character(1L)), collapse = "\n\n")
-  } else {
-    ocr(image, engine = eng)
+# ---- Public function used by run_monthly.R ----
+extract_tesseract <- function(image_paths) {
+  if (length(image_paths) == 0) {
+    cli::cli_alert_warning("extract_tesseract: No image paths given.")
+    return(tibble(source_image = character(), ocr_text = character(), psm_used = integer()))
   }
+
+  results <- map_df(image_paths, function(pth) {
+    cli::cli_alert("OCR: {basename(pth)}")
+    img <- tryCatch(.preprocess_image(pth, min_width = min_width, dpi = dpi),
+                    error = function(e) { cli::cli_alert_danger("Preprocess failed: {e$message}"); return(NULL) })
+    if (is.null(img)) {
+      return(tibble(source_image = pth, ocr_text = "", psm_used = NA_integer_))
+    }
+
+    best <- .ocr_multi_psm(img, langs = langs, psms = psms)
+    txt  <- if (!is.null(best$text)) best$text else ""
+
+    # Debug dump
+    if (!is.null(.debug_dir)) {
+      safe_name <- gsub("[^A-Za-z0-9._-]", "_", basename(pth))
+      out_txt   <- file.path(.debug_dir, paste0(safe_name, ".txt"))
+      cat(txt, file = out_txt, sep = "")
+    }
+
+    # Warn on very short OCR (likely failure)
+    if (nchar(txt) < 80) {
+      cli::cli_alert_warning("Very short OCR text (<80 chars) for {basename(pth)}. Consider raising OCR_DPI/OCR_MIN_WIDTH or checking language packs.")
+    }
+
+    tibble(source_image = pth, ocr_text = txt, psm_used = as.integer(best$psm))
+  })
+
+  results
 }
-
-# ---- Public API ---------------------------------------------------------------
-tesseract_to_text <- function(path) {
-  img <- tryCatch(.prep_image(path), error = function(e) NULL)
-  if (is.null(img)) return("")
-
-  for (psm in OCR_PSMS) {
-    txt <- tryCatch(.tess_once(img, psm), error = function(e) "")
-    # Return as soon as we have a reasonably non-empty result
-    if (nchar(gsub("\\s+", "", txt)) > 60) return(txt)
-  }
-  # Fallback: whatever we got last
-  txt %||% ""
-}
-
-# Backward-compat aliases the pipeline probes for
-tesseract_ocr_text <- tesseract_to_text
-ocr_to_text        <- tesseract_to_text
-ocr_image_text     <- tesseract_to_text
-
-`%||%` <- function(a, b) if (!is.null(a) && !is.na(a) && nzchar(a)) a else b
