@@ -61,14 +61,12 @@ apply_name_patches <- function(df){
   df
 }
 
-# --- Manual overrides: add or replace exact rows by venue+date ---------------
 merge_manual_events <- function(df){
   pth <- file.path("data","manual_events.csv")
   if (!file.exists(pth)) return(df)
   man <- tryCatch(readr::read_csv(pth, show_col_types = FALSE), error=function(e) tibble())
   if (!nrow(man)) return(df)
 
-  # Accept either a 'date' column or year+month+day
   if (!("event_date" %in% names(man))) {
     if ("date" %in% names(man)) {
       man$event_date <- as.Date(man$date)
@@ -94,12 +92,9 @@ merge_manual_events <- function(df){
 
   if (!nrow(man)) return(df)
 
-  # Drop any existing rows with same venue+date so manual wins
-  df2 <- df %>%
+  df %>%
     anti_join(man %>% select(venue, event_date), by = c("venue","event_date")) %>%
     bind_rows(man)
-
-  df2
 }
 
 validate_events <- function(df){
@@ -125,8 +120,9 @@ validate_events <- function(df){
     )) %>%
     arrange(desc(.data$pref_rank), .data$source)
 
-  # Build allowlists for Salsa
+  # --- Build allowlists for Salsa (from rules) ---
   ALLOWED <- list()
+  VENUE_SKIP <- character(0)
   if (length(VENUE_RULES)) {
     for (vk in names(VENUE_RULES)){
       rr <- VENUE_RULES[[vk]]$residencies
@@ -134,10 +130,13 @@ validate_events <- function(df){
         ab <- unique(unlist(lapply(rr, function(r) r$allowed_bands %||% character(0))))
         if (length(ab)) ALLOWED[[vk]] <- tolower(trimws(ab))
       }
+      if (isTRUE(VENUE_RULES[[vk]]$skip_residency_if_single)) {
+        VENUE_SKIP <- c(VENUE_SKIP, vk)
+      }
     }
   }
 
-  # Lock Salsa pairs to rule output
+  # --- GOLD Salsa pairs (exact output from Salsa rule) ---
   salsa_gold <- df %>%
     filter(.data$rule_name == "miercoles_de_salsa") %>%
     transmute(
@@ -162,6 +161,7 @@ validate_events <- function(df){
       select(-.data$is_salsa_ctx, -.data$in_gold)
   }
 
+  # --- Enforce allowlist on Salsa Wednesdays ---
   if (length(ALLOWED)) {
     df <- df %>%
       mutate(
@@ -181,7 +181,22 @@ validate_events <- function(df){
       select(-.data$keep_allowed, -.data$et_low, -.data$band_low)
   }
 
-  # Last-mile name fixes for Jazzatlán
+  # --- Jazzatlán-type precedence: singles > residencies on the same date ---
+  if (length(VENUE_SKIP)) {
+    df <- df %>%
+      mutate(
+        is_residency = (!is.na(.data$rule_name) & .data$rule_name %in% c("miercoles_de_salsa","martes_de_jam")) |
+                       grepl("\\b(salsa|jam)\\b", tolower(coalesce(.data$event_title, ""))),
+        venue_skip = .data$venue_key %in% VENUE_SKIP
+      ) %>%
+      group_by(.data$venue_key, .data$event_date) %>%
+      mutate(any_single_here = any(!.data$is_residency)) %>%
+      ungroup() %>%
+      filter(!(venue_skip & is_residency & any_single_here)) %>%
+      select(-.data$is_residency, -.data$venue_skip, -.data$any_single_here)
+  }
+
+  # --- Last-mile name fixes for Jazzatlán ---
   df <- df %>%
     mutate(
       band_name = ifelse(
@@ -205,7 +220,7 @@ validate_events <- function(df){
     distinct(.data$venue, .data$event_date, .data$band_name, .data$event_time, .keep_all = TRUE) %>%
     select(-.data$venue_key, -.data$weekday_num, -.data$has_title, -.data$pref_rank)
 
-  # Apply CSV patches then manual overrides
+  # Patches then manual overrides last
   df <- apply_name_patches(df)
   df <- merge_manual_events(df)
   df
