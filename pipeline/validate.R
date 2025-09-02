@@ -5,7 +5,7 @@ suppressPackageStartupMessages({
   library(readr)
 })
 
-message("[validate.R] v2025-09-02 minimal + per-venue manual overrides")
+message("[validate.R] v2025-09-02 minimal + per-venue manual overrides + safe-venue-cols")
 
 # ---------- Helpers ------------------------------------------------------------
 
@@ -94,7 +94,6 @@ read_manual_events_all <- function(base_dir = "data/manual_events", venues_df = 
   if (dir.exists(base_dir)) {
     files <- list.files(base_dir, pattern = "\\.csv$", recursive = TRUE, full.names = TRUE)
     for (fp in files){
-      # venue guess from file name (last path segment, without extension)
       vn <- tools::file_path_sans_ext(basename(fp))
       vn <- gsub("[-_]+", " ", vn)
       vn <- trimws(vn)
@@ -107,21 +106,17 @@ read_manual_events_all <- function(base_dir = "data/manual_events", venues_df = 
 
   if (!length(out)) return(tibble())
 
-  # Canonical venue names (if venues_df provided)
   vmap <- NULL
   if (!is.null(venues_df) && nrow(venues_df)){
     vmap <- venues_df %>% mutate(vkey = norm_venue_key(venue)) %>% select(vkey, venue)
   }
 
-  # Parse & normalize each small table
   parsed <- lapply(out, function(x){
     df <- x$df
     venue_from_path <- x$venue_from
 
-    # unify column names to lowercase
     names(df) <- tolower(names(df))
 
-    # event_date from event_date | date | y/m/d
     if (!("event_date" %in% names(df))) {
       if ("date" %in% names(df)) {
         df$event_date <- suppressWarnings(as.Date(df$date))
@@ -132,18 +127,15 @@ read_manual_events_all <- function(base_dir = "data/manual_events", venues_df = 
                                          as.integer(df$day)))
       }
     }
-    # band_name from band_name | band
     if (!("band_name" %in% names(df)) && "band" %in% names(df)) {
       df$band_name <- df$band
     }
-    # event_time from event_time | time | hora
     if (!("event_time" %in% names(df))) {
       if ("time" %in% names(df)) df$event_time <- df$time
       else if ("hora" %in% names(df)) df$event_time <- df$hora
       else df$event_time <- NA_character_
     }
 
-    # venue
     if (!("venue" %in% names(df)) || all(is.na(df$venue)) || !any(nzchar(df$venue))) {
       df$venue <- venue_from_path %||% ""
     }
@@ -159,7 +151,6 @@ read_manual_events_all <- function(base_dir = "data/manual_events", venues_df = 
       mutate(event_time = normalize_time_vec(event_time)) %>%
       filter(!is.na(event_date), nzchar(venue), nzchar(band_name))
 
-    # canonicalize venue name via venues.csv if possible
     if (!is.null(vmap)) {
       df <- df %>%
         mutate(vkey = norm_venue_key(venue)) %>%
@@ -176,13 +167,11 @@ read_manual_events_all <- function(base_dir = "data/manual_events", venues_df = 
 
 # ---------- Main entry ---------------------------------------------------------
 
-# df: auto-extracted rows (from OCR+LLM), columns: venue, event_date, band_name, event_time, ...
-# venues_df: data/venues.csv (optional) for muni/state/coords
 validate_events <- function(df, venues_df = NULL){
-  # Read per-venue manual overrides first
+  # Manual overrides (per-venue files + optional global CSV)
   manual <- read_manual_events_all("data/manual_events", venues_df = venues_df)
 
-  # Start from auto-extracted (could be empty)
+  # Start from auto-extracted
   if (!nrow(df)) {
     base <- tibble(venue = character(), event_date = as.Date(character()),
                    band_name = character(), event_time = character(),
@@ -196,14 +185,14 @@ validate_events <- function(df, venues_df = NULL){
       select(venue, event_date, band_name, event_time, venue_id)
   }
 
-  # Manual rows override any auto rows for same venue+date
+  # Manual rows override same (venue+date)
   all_rows <- base %>%
     anti_join(manual %>% select(venue, event_date), by = c("venue","event_date")) %>%
     bind_rows(manual)
 
   if (!nrow(all_rows)) return(all_rows)
 
-  # Join venue metadata if provided
+  # Try join venue metadata if provided
   if (!is.null(venues_df) && nrow(venues_df)) {
     vsel <- venues_df %>%
       transmute(
@@ -214,6 +203,13 @@ validate_events <- function(df, venues_df = NULL){
         longitude    = suppressWarnings(as.numeric(coalesce(longitude, lon, NA)))
       )
     all_rows <- all_rows %>% left_join(vsel, by = "venue")
+  }
+
+  # ---- SAFETY: ensure metadata columns exist even if join didn't happen -------
+  for (nm in c("municipality","state","latitude","longitude","venue_id")) {
+    if (!nm %in% names(all_rows)) {
+      all_rows[[nm]] <- if (nm %in% c("latitude","longitude")) NA_real_ else NA_character_
+    }
   }
 
   all_rows %>%
