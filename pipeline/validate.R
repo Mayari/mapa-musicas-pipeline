@@ -4,7 +4,6 @@ suppressPackageStartupMessages({
   library(stringr)
 })
 
-# If venue_rules.R was sourced in run_monthly.R, we can use its data here
 if (!exists("VENUE_RULES")) VENUE_RULES <- list()
 
 norm_venue_key <- function(x){
@@ -14,7 +13,6 @@ norm_venue_key <- function(x){
   trimws(x)
 }
 
-# --- Vectorized time normalizer: returns HH:MM (24h) or NA
 normalize_time_vec <- function(tt) {
   if (is.null(tt)) return(character(0))
   tt <- as.character(tt); if (!length(tt)) return(tt)
@@ -33,7 +31,6 @@ normalize_time_vec <- function(tt) {
   out
 }
 
-# Optional CSV patches (supports exact or regex)
 apply_name_patches <- function(df){
   pth <- file.path("data","name_patches.csv")
   if (!file.exists(pth)) return(df)
@@ -64,10 +61,50 @@ apply_name_patches <- function(df){
   df
 }
 
+# --- Manual overrides: add or replace exact rows by venue+date ---------------
+merge_manual_events <- function(df){
+  pth <- file.path("data","manual_events.csv")
+  if (!file.exists(pth)) return(df)
+  man <- tryCatch(readr::read_csv(pth, show_col_types = FALSE), error=function(e) tibble())
+  if (!nrow(man)) return(df)
+
+  # Accept either a 'date' column or year+month+day
+  if (!("event_date" %in% names(man))) {
+    if ("date" %in% names(man)) {
+      man$event_date <- as.Date(man$date)
+    } else if (all(c("year","month","day") %in% names(man))) {
+      man$event_date <- as.Date(sprintf("%04d-%02d-%02d",
+                                        as.integer(man$year),
+                                        as.integer(man$month),
+                                        as.integer(man$day)))
+    }
+  }
+  man <- man %>%
+    transmute(
+      venue        = as.character(venue),
+      venue_id     = NA_character_,
+      event_date   = as.Date(event_date),
+      band_name    = stringr::str_squish(as.character(band_name)),
+      event_title  = if ("event_title" %in% names(.)) as.character(event_title) else NA_character_,
+      event_time   = if ("event_time"  %in% names(.)) as.character(event_time)  else NA_character_,
+      source_image = if ("source_image" %in% names(.)) as.character(source_image) else NA_character_
+    ) %>%
+    mutate(event_time = normalize_time_vec(event_time)) %>%
+    filter(!is.na(event_date), nzchar(venue), nzchar(band_name))
+
+  if (!nrow(man)) return(df)
+
+  # Drop any existing rows with same venue+date so manual wins
+  df2 <- df %>%
+    anti_join(man %>% select(venue, event_date), by = c("venue","event_date")) %>%
+    bind_rows(man)
+
+  df2
+}
+
 validate_events <- function(df){
   if (!nrow(df)) return(df)
 
-  # Core normalization
   df <- df %>%
     mutate(
       band_name   = stringr::str_squish(as.character(band_name)),
@@ -77,14 +114,9 @@ validate_events <- function(df){
       rule_name   = ifelse("rule_name" %in% names(.), as.character(.data$rule_name), NA_character_),
       has_title   = !is.na(event_title) & nzchar(event_title),
       weekday_num = lubridate::wday(.data$event_date, week_start = 1),
-
-      # Guarantee year/month columns exist and are numeric (avoid masking lubridate::year())
       year  = if ("year"  %in% names(.)) suppressWarnings(as.integer(.data$year))  else as.integer(lubridate::year(.data$event_date)),
       month = if ("month" %in% names(.)) suppressWarnings(as.integer(.data$month)) else as.integer(lubridate::month(.data$event_date))
-    )
-
-  # Prefer our rule-derived rows, then rows with titles
-  df <- df %>%
+    ) %>%
     mutate(pref_rank = dplyr::case_when(
       !is.na(.data$rule_name) & .data$has_title ~ 4L,
       !is.na(.data$rule_name)                   ~ 3L,
@@ -93,7 +125,7 @@ validate_events <- function(df){
     )) %>%
     arrange(desc(.data$pref_rank), .data$source)
 
-  # Build per-venue allowlists from rules
+  # Build allowlists for Salsa
   ALLOWED <- list()
   if (length(VENUE_RULES)) {
     for (vk in names(VENUE_RULES)){
@@ -105,7 +137,7 @@ validate_events <- function(df){
     }
   }
 
-  # GOLD Salsa pairs: exactly what our Salsa rule emitted
+  # Lock Salsa pairs to rule output
   salsa_gold <- df %>%
     filter(.data$rule_name == "miercoles_de_salsa") %>%
     transmute(
@@ -117,7 +149,6 @@ validate_events <- function(df){
     )
 
   if (nrow(salsa_gold)) {
-    # Drop any Wednesday "Salsa-like" rows that don't match a gold pair
     df <- df %>%
       mutate(
         is_salsa_ctx = .data$weekday_num == 3 & grepl("salsa", tolower(coalesce(.data$event_title, ""))),
@@ -131,7 +162,6 @@ validate_events <- function(df){
       select(-.data$is_salsa_ctx, -.data$in_gold)
   }
 
-  # If venue has an allowlist, enforce it on Salsa Wednesdays
   if (length(ALLOWED)) {
     df <- df %>%
       mutate(
@@ -151,13 +181,13 @@ validate_events <- function(df){
       select(-.data$keep_allowed, -.data$et_low, -.data$band_low)
   }
 
-  # Last-mile name fixes for Jazzatlán (in case any slip through):
+  # Last-mile name fixes for Jazzatlán
   df <- df %>%
     mutate(
       band_name = ifelse(
         norm_venue_key(.data$venue) == "jazzatlán cholula" &
-          grepl("explosi", .data$band_name, ignore.case = TRUE) &
-          grepl("latina",  .data$band_name, ignore.case = TRUE),
+          grepl("explosi|expropiaci", .data$band_name, ignore.case = TRUE) &
+          grepl("latina",            .data$band_name, ignore.case = TRUE),
         "Exploración Latina", .data$band_name),
       band_name = ifelse(
         norm_venue_key(.data$venue) == "jazzatlán cholula" &
@@ -165,17 +195,18 @@ validate_events <- function(df){
         "Soneros Son", .data$band_name)
     )
 
-  # Drop any Salsa rows that ended up without band_name
+  # Drop Salsa rows with empty band
   df <- df %>%
     filter(!(grepl("salsa", tolower(coalesce(.data$event_title, ""))) &
              (is.na(.data$band_name) | !nzchar(.data$band_name))))
 
-  # Deduplicate after all preferences/filters
+  # Deduplicate
   df <- df %>%
     distinct(.data$venue, .data$event_date, .data$band_name, .data$event_time, .keep_all = TRUE) %>%
     select(-.data$venue_key, -.data$weekday_num, -.data$has_title, -.data$pref_rank)
 
-  # Apply CSV patches last
+  # Apply CSV patches then manual overrides
   df <- apply_name_patches(df)
+  df <- merge_manual_events(df)
   df
 }
