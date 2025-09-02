@@ -1,5 +1,6 @@
 {
   "venue_key": "jazzatlán cholula",
+  "skip_residency_if_single": true,
   "residencies": [
     {
       "name": "miercoles_de_salsa",
