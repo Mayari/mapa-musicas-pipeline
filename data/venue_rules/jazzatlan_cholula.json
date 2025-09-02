@@ -17,6 +17,7 @@
       "snap_days": true,
       "corrections": [
         { "from_rx": "(?i)^\\s*explosi[óo]n\\s+latina\\s*$", "to": "Exploración Latina" },
+        { "from_rx": "(?i)^\\s*expropiaci[óo]n\\s+latina\\s*$", "to": "Exploración Latina" },
         { "from_rx": "(?i)^\\s*orquesta\\s+exploraci[óo]n\\s+latina\\s*$", "to": "Exploración Latina" },
         { "from_rx": "(?i)^\\s*son(eros\\s+son)?\\s*$", "to": "Soneros Son" }
       ]
