@@ -4,14 +4,10 @@ suppressPackageStartupMessages({
   library(stringr)
 })
 
-message("[parse_posters.R] v2025-09-01 per-venue rules + fallbacks")
+message("[parse_posters.R] v2025-09-01 per-venue rules + allowed + regex-fixes")
 
-# ---- load rules once
-if (exists("load_venue_rules")) {
-  VENUE_RULES <- tryCatch(load_venue_rules("data/venue_rules"), error=function(e) list())
-} else {
-  VENUE_RULES <- list()
-}
+# ---- rules cache (populated by venue_rules.R if sourced) ----
+if (!exists("VENUE_RULES")) VENUE_RULES <- list()
 
 weekday_index <- c(
   "lunes"=1, "martes"=2, "miércoles"=3, "miercoles"=3,
@@ -70,15 +66,6 @@ block_after_heading <- function(lines_lc, start_idx, max_lines = 14, stop_pat = 
   c(start_idx, end_idx)
 }
 
-apply_corrections <- function(x, corr){
-  if (is.null(corr) || !length(corr)) return(x)
-  for (i in seq_len(nrow(corr))){
-    frm <- corr$from[i]; to <- corr$to[i]
-    x[tolower(x) == tolower(frm)] <- to
-  }
-  x
-}
-
 # ---------- venue-aware engine ----------
 parse_with_rules <- function(row, rules, raw_text){
   if (is.null(rules) || is.null(rules$residencies)) return(tibble())
@@ -89,8 +76,7 @@ parse_with_rules <- function(row, rules, raw_text){
   lines_lc <- tolower(lines)
   low <- tolower(raw_text)
 
-  for (k in seq_along(rules$residencies)){
-    r <- rules$residencies[[k]]
+  for (r in rules$residencies){
     head_rx   <- r$heading_regex %||% ""
     ev_title  <- r$event_title %||% ""
     wd_name   <- r$weekday %||% NA
@@ -101,23 +87,25 @@ parse_with_rules <- function(row, rules, raw_text){
     default_band <- r$default_band %||% NULL
     drop_band_rx <- r$drop_band_regex %||% NULL
     snap_days    <- isTRUE(r$snap_days)
-    corrections  <- NULL
+    allowed_bands <- r$allowed_bands %||% character(0)
+    allowed_norm  <- tolower(trimws(allowed_bands))
+
+    # corrections: exact or regex
+    corr_exact <- tibble(from = character(), to = character())
+    corr_rx    <- tibble(from_rx = character(), to = character())
     if (!is.null(r$corrections)) {
-      corrections <- tibble(from = as.character(r$corrections$from), to = as.character(r$corrections$to))
+      if (!is.null(r$corrections$from))   corr_exact <- tibble(from = as.character(r$corrections$from),   to = as.character(r$corrections$to))
+      if (!is.null(r$corrections$from_rx)) corr_rx   <- tibble(from_rx = as.character(r$corrections$from_rx), to = as.character(r$corrections$to))
     }
 
-    # Find the heading in lines; if not found but we have default_band and its regex matches in full text, allow it
+    # find the heading area
     idx <- which(grepl(head_rx, lines_lc))
     trigger <- length(idx) > 0
     if (!trigger && !is.null(default_band) && nzchar(head_rx)) {
       trigger <- grepl(head_rx, low)
       if (trigger) {
-        # Pick a reasonable starting line (first line matching heading’s first word)
         first_word <- strsplit(head_rx, "\\W")[[1]][1]
-        if (!is.na(first_word) && nzchar(first_word)) {
-          idx <- which(grepl(first_word, lines_lc))[1]
-          if (is.na(idx)) idx <- 1L
-        } else idx <- 1L
+        idx <- which(grepl(first_word, lines_lc))[1]; if (is.na(idx)) idx <- 1L
       }
     }
     if (!trigger) next
@@ -125,7 +113,7 @@ parse_with_rules <- function(row, rules, raw_text){
     rng <- block_after_heading(lines_lc, idx[1], max_lines = win_lines, stop_pat = stop_pat)
     block <- paste(lines[rng[1]:rng[2]], collapse = "\n")
 
-    # If band list format is present, expand dates for each band
+    # pattern "Band: 10 y 24"
     mm <- stringr::str_match_all(tolower(block), band_rx)
     if (length(mm) && length(mm[[1]]) > 0){
       M <- mm[[1]]
@@ -133,15 +121,29 @@ parse_with_rules <- function(row, rules, raw_text){
       dayss <- M[,3]
       for (i in seq_along(bands)){
         dn0 <- parse_day_list(dayss[i])
-        dn <- dn0
+        dn  <- dn0
         if (snap_days && !is.na(wd_idx)) {
           dn <- unique(na.omit(sapply(dn0, snap_day_to_weekday, year=row$year, month=row$month, wd_idx=wd_idx)))
         }
         if (!length(dn)) next
 
+        # clean/correct band
         b_clean <- stringr::str_squish(stringr::str_to_title(bands[i]))
+        # regex corrections
+        if (nrow(corr_rx)){
+          for (j in seq_len(nrow(corr_rx))){
+            if (grepl(corr_rx$from_rx[j], b_clean, perl = TRUE)) b_clean <- corr_rx$to[j]
+          }
+        }
+        # exact corrections
+        if (nrow(corr_exact)){
+          hit <- tolower(b_clean) == tolower(corr_exact$from)
+          if (any(hit)) b_clean <- corr_exact$to[which(hit)[1]]
+        }
+        # drop unwanted bands
         if (!is.null(drop_band_rx) && grepl(drop_band_rx, tolower(b_clean))) next
-        if (!is.null(corrections)) b_clean <- apply_corrections(b_clean, corrections)
+        # whitelist if provided
+        if (length(allowed_norm) && !(tolower(b_clean) %in% allowed_norm)) next
 
         dates <- as.Date(sprintf("%04d-%02d-%02d", row$year, row$month, dn))
         out[[length(out)+1]] <- tibble(
@@ -157,7 +159,7 @@ parse_with_rules <- function(row, rules, raw_text){
       next
     }
 
-    # Otherwise, if there is a default band and a target weekday, generate weekly rows
+    # default weekly rows (e.g., Jam)
     if (!is.null(default_band) && !is.na(wd_idx)) {
       dts <- dates_for(row$year, row$month, wd_idx)
       if (length(dts)){
@@ -178,14 +180,13 @@ parse_with_rules <- function(row, rules, raw_text){
   dplyr::bind_rows(out)
 }
 
-# --------- generic fallback (kept minimal)
+# Generic fallback (kept minimal: Jam)
 generic_parse <- function(row){
   txt <- row$ocr_text
   if (is.na(txt) || !nzchar(txt)) return(tibble())
   low <- tolower(txt)
   out <- list()
 
-  # Generic Jam (fallback)
   jam_present <- grepl("\\bjam\\b", low) || grepl("jam\\s*session", low)
   jam_martes  <- grepl("(cada|todos?\\s+los)\\s+martes", low) ||
                  grepl("martes\\s+de\\s+jam", low) ||
