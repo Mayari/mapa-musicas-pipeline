@@ -1,6 +1,6 @@
 # pipeline/validate.R
-# v2025-09-02a  minimal validator + per-venue manual overrides + safe-venue-cols
-# Robust venues join (no hard refs to non-existent columns)
+# v2025-09-02b minimal validator + per-venue manual overrides + safer venues join
+# - Fixes: recognizes more venues.csv schemas (venue_name, nombre, municipio/estado, lat/lon variants)
 
 suppressPackageStartupMessages({
   library(readr)
@@ -12,9 +12,9 @@ suppressPackageStartupMessages({
   library(cli)
 })
 
-# ---- helpers ----
-
 `%||%` <- function(a, b) if (!is.null(a)) a else b
+
+# ---- helpers ----
 
 .norm_venue <- function(x) {
   if (is.null(x)) return(NA_character_)
@@ -76,14 +76,13 @@ suppressPackageStartupMessages({
   if (length(time_col) == 0) out$event_time <- NA_character_ else out <- out %>% rename(event_time = !!time_col[1])
 
   # Venue
-  venue_col <- intersect(nm, c("venue","lugar","sala","espacio"))
+  venue_col <- intersect(nm, c("venue","venue_name","nombre","lugar","sala","espacio"))
   if (length(venue_col) == 0) {
     if (!"venue" %in% names(out)) out$venue <- NA_character_
   } else {
     out <- out %>% rename(venue = !!venue_col[1])
   }
 
-  # Ensure source_image column if present in input
   if (!"source_image" %in% names(out)) out$source_image <- NA_character_
 
   out %>%
@@ -95,7 +94,7 @@ suppressPackageStartupMessages({
     select(any_of(c("source_image")), venue, event_date, band_name, event_time)
 }
 
-# Robust join to venues.csv
+# Robust join to venues.csv with flexible schemas
 .join_venues_metadata <- function(df, venues_df) {
   # Prepare output columns regardless
   df$municipality <- NA_character_
@@ -106,21 +105,34 @@ suppressPackageStartupMessages({
 
   if (is.null(venues_df) || nrow(venues_df) == 0) return(df)
 
-  v <- venues_df %>%
-    rename_with(tolower)
+  v <- venues_df %>% rename_with(tolower)
 
-  # Find the column in venues that carries the display/primary venue name
-  venue_name_col <- intersect(names(v), c("venue","name","nombre","lugar","sala","espacio"))
+  # Candidate columns for venue name
+  venue_name_col <- intersect(names(v), c("venue","venue_name","name","nombre","lugar","sala","espacio"))
   if (length(venue_name_col) == 0) {
-    cli::cli_alert_warning("venues.csv has no recognizable venue name column (tried: venue,name,nombre,lugar,sala,espacio). Skipping venue join.")
+    cli::cli_alert_warning("venues.csv has no recognizable venue name column (tried: venue,venue_name,name,nombre,lugar,sala,espacio). Skipping venue join.")
     return(df)
   }
 
-  v <- v %>%
-    mutate(venue_norm = .norm_venue(.data[[venue_name_col[1]]]))
+  # Candidate columns for municipality/state and lat/lon
+  muni_col <- intersect(names(v), c("municipality","municipio"))
+  state_col <- intersect(names(v), c("state","estado"))
+  lat_col <- intersect(names(v), c("latitude","lat"))
+  lon_col <- intersect(names(v), c("longitude","lon","lng","long"))
 
-  keep_cols <- intersect(names(v), c("venue_norm","municipality","state","latitude","longitude","venue_id"))
-  v <- v %>% select(all_of(keep_cols)) %>% distinct()
+  venue_id_col <- intersect(names(v), c("venue_id","id","codigo","clave"))
+
+  v <- v %>%
+    mutate(
+      venue_norm = .norm_venue(.data[[venue_name_col[1]]]),
+      municipality = if (length(muni_col)) .data[[muni_col[1]]] else NA_character_,
+      state        = if (length(state_col)) .data[[state_col[1]]] else NA_character_,
+      latitude     = suppressWarnings(as.numeric(if (length(lat_col)) .data[[lat_col[1]]] else NA_real_)),
+      longitude    = suppressWarnings(as.numeric(if (length(lon_col)) .data[[lon_col[1]]] else NA_real_)),
+      venue_id     = if (length(venue_id_col)) as.character(.data[[venue_id_col[1]]]) else NA_character_
+    ) %>%
+    select(venue_norm, municipality, state, latitude, longitude, venue_id) %>%
+    distinct()
 
   df %>%
     mutate(venue_norm = .norm_venue(venue)) %>%
