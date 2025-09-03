@@ -1,5 +1,5 @@
 # pipeline/run_monthly.R
-# v2.3.2 Vision (with preprocess) + strict month/year + per-image OpenAI fallback + debug
+# v2.4.0 Vision (with preprocess) + strict month/year + per-image OpenAI fallback + debug
 
 suppressPackageStartupMessages({
   library(readr)
@@ -15,7 +15,7 @@ suppressPackageStartupMessages({
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
-cli::cli_h1(">> run_monthly v2.3.2 (Vision+preprocess + strict month/year + per-image OpenAI fallback + debug)")
+cli::cli_h1(">> run_monthly v2.4.0 (Vision+preprocess + strict month/year + per-image OpenAI fallback + debug)")
 
 # ---- Args ----
 args <- commandArgs(trailingOnly = TRUE)
@@ -44,7 +44,8 @@ if (!is.null(debug_dir)) {
     sprintf("GOOGLE_APPLICATION_CREDENTIALS=%s", ifelse(nzchar(Sys.getenv("GOOGLE_APPLICATION_CREDENTIALS")), "set", "missing")),
     sprintf("OPENAI_TEXT_MODEL=%s", Sys.getenv("OPENAI_TEXT_MODEL")),
     sprintf("OPENAI_IMAGE_MODEL=%s", Sys.getenv("OPENAI_IMAGE_MODEL")),
-    sprintf("OPENAI_API_KEY_SET=%s", ifelse(nzchar(Sys.getenv("OPENAI_API_KEY")), "yes", "no"))
+    sprintf("OPENAI_API_KEY_SET=%s", ifelse(nzchar(Sys.getenv("OPENAI_API_KEY")), "yes", "no")),
+    sprintf("OPENAI_THROTTLE_SEC=%s", Sys.getenv("OPENAI_THROTTLE_SEC", "0"))
   )
   writeLines(envdump, file.path(debug_dir, "env.txt"))
 }
@@ -106,8 +107,8 @@ eff_df <- usable_meta %>%
   select(source_image, effective_path, year, month_name_es)
 
 # ---- Preprocess (ImageMagick CLI) ----
-# auto-orient → grayscale → deskew 40% → resize width 1800px → unsharp → strip
-preproc_image_cli <- function(in_path, out_dir_, target_width = 1800L) {
+# auto-orient → grayscale → deskew 40% → resize width 1600px → unsharp → strip  (slightly smaller for API payloads)
+preproc_image_cli <- function(in_path, out_dir_, target_width = 1600L) {
   ext <- tolower(tools::file_ext(in_path))
   if (!ext %in% c("jpg", "jpeg", "png")) return(in_path)
   out <- file.path(out_dir_, basename(in_path))
@@ -123,7 +124,7 @@ pre_dir <- if (is.null(debug_dir)) tempdir() else file.path(debug_dir, "preproc"
 dir.create(pre_dir, showWarnings = FALSE, recursive = TRUE)
 
 eff_df <- eff_df %>%
-  mutate(preproc_path = purrr::map_chr(effective_path, ~ preproc_image_cli(.x, pre_dir, target_width = 1800L)))
+  mutate(preproc_path = purrr::map_chr(effective_path, ~ preproc_image_cli(.x, pre_dir, target_width = 1600L)))
 
 # For debug: record file sizes
 if (!is.null(debug_dir)) {
@@ -143,12 +144,12 @@ provider <- dplyr::case_when(
 if (provider == "auto") provider <- if (has_vision) "vision" else "openai"
 cli::cli_alert_info(glue("OCR provider selection: {provider} (vision_cred={has_vision})"))
 
-# ---- Helper: OpenAI image path ----
+# ---- Helper: OpenAI image path (now uses preprocessed images) ----
 run_openai_image_pipeline <- function(df) {
   source("pipeline/extract_openai.R")
-  cli::cli_alert_info("[extract_openai.R] strict-month image -> date / band / time")
+  cli::cli_alert_info("[extract_openai.R] strict-month image -> date / band / time (preprocessed)")
   extract_openai(
-    image_paths      = df$effective_path,
+    image_paths      = df$preproc_path,   # <-- use preprocessed paths
     month_es         = df$month_name_es,
     year             = df$year,
     source_image_ids = df$source_image
@@ -175,9 +176,7 @@ if (nrow(eff_df) == 0) {
 
   # Vision-first with per-image fallback
   cand <- c("pipeline/extract_gvision.R", "pipeline/extract_google_vision.R")
-  for (f in cand) {
-    if (file.exists(f)) try(source(f), silent = TRUE)
-  }
+  for (f in cand) if (file.exists(f)) try(source(f), silent = TRUE)
   if (!exists("extract_gvision") && !exists("extract_google_vision")) {
     stop("No Vision helper found (expected pipeline/extract_gvision.R or extract_google_vision.R).")
   }
@@ -200,7 +199,7 @@ if (nrow(eff_df) == 0) {
     }
   }
 
-  # 2) LLM text-only pass for those with enough OCR text
+  # 2) LLM text-only pass where OCR is long enough
   source("pipeline/extract_openai_text.R")
   cli::cli_alert_info("[extract_openai_text.R] strict-month (band+date+time only)")
 
@@ -210,29 +209,19 @@ if (nrow(eff_df) == 0) {
 
   from_text <- if (nrow(llm_in) == 0) {
     cli::cli_alert_warning(glue("Vision OCR produced < {min_chars} chars for all images. Falling back to OpenAI image for all."))
-    tibble(
-      source_image = character(),
-      event_date   = as.Date(character()),
-      band_name    = character(),
-      event_time   = character()
-    )
+    tibble(source_image = character(), event_date = as.Date(character()), band_name = character(), event_time = character())
   } else {
     extract_openai_text(llm_in)
   }
 
-  # 3) For short OCR images, fallback to OpenAI image
+  # 3) For short OCR images, fallback to OpenAI image (preprocessed)
   short_df <- ocr_df %>% filter(nchar_ocr < min_chars)
   from_image <- if (nrow(short_df) > 0) {
     cli::cli_alert_info(glue("OpenAI image fallback for {nrow(short_df)} poster(s) with short OCR."))
     idx <- match(short_df$source_image, eff_df$source_image)
     run_openai_image_pipeline(eff_df[idx, ])
   } else {
-    tibble(
-      source_image = character(),
-      event_date   = as.Date(character()),
-      band_name    = character(),
-      event_time   = character()
-    )
+    tibble(source_image = character(), event_date = as.Date(character()), band_name = character(), event_time = character())
   }
 
   # 4) Combine and dedupe
