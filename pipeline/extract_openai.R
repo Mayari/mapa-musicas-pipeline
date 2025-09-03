@@ -1,11 +1,15 @@
 # pipeline/extract_openai.R
-# v3.0.0 Image-based fallback extractor (function-calling first; then Responses)
+# v3.1.0 Image-based fallback extractor (adds throttle)
 suppressPackageStartupMessages({
   library(httr2); library(jsonlite); library(base64enc); library(cli)
   library(tibble); library(purrr); library(dplyr); library(lubridate); library(stringr)
 })
 `%||%` <- function(a,b) if (!is.null(a)) a else b
 .debug_dir <- function() getOption("mapa.debug_dir", NULL)
+.throttle <- function() {
+  sl <- suppressWarnings(as.numeric(Sys.getenv("OPENAI_THROTTLE_SEC","0")))
+  if (!is.na(sl) && sl > 0) Sys.sleep(sl)
+}
 
 .month_es_to_num <- function(m) {
   if (is.null(m) || is.na(m)) return(NA_integer_)
@@ -53,6 +57,7 @@ suppressPackageStartupMessages({
       tool_choice=list(type="function", `function`=list(name="return_items"))
     ), auto_unbox=TRUE)
   resp <- req_perform(req)
+  .throttle()
   list(status=resp_status(resp), body=resp_body_string(resp))
 }
 
@@ -71,6 +76,7 @@ suppressPackageStartupMessages({
       )
     ), auto_unbox=TRUE)
   resp <- req_perform(req)
+  .throttle()
   list(status=resp_status(resp), body=resp_body_string(resp))
 }
 
