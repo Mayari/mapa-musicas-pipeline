@@ -1,9 +1,6 @@
 # pipeline/extract_openai.R
-# Minimal direct image extraction using OpenAI (gpt-4o by default).
-# Returns tibble: source_image, event_date (Date), band_name (chr), event_time (chr).
-# Behavior:
-#  - Uses month/year hints from filename (month_es, year) to avoid wrong months/years.
-#  - STRICT JSON-only response; omit rows if unsure.
+# v2.1.0 Minimal direct image extraction using OpenAI (strict month/year)
+# Returns tibble: source_image, event_date (Date), band_name, event_time
 
 suppressPackageStartupMessages({
   library(httr2)
@@ -14,13 +11,14 @@ suppressPackageStartupMessages({
   library(purrr)
   library(dplyr)
   library(lubridate)
+  library(stringr)
 })
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
-# Map Spanish month to number
 .month_es_to_num <- function(m) {
-  m <- tolower(trimws(m))
+  if (is.null(m) || is.na(m)) return(NA_integer_)
+  m <- tolower(str_trim(m))
   dict <- c("enero"=1,"febrero"=2,"marzo"=3,"abril"=4,"mayo"=5,"junio"=6,
             "julio"=7,"agosto"=8,"septiembre"=9,"setiembre"=9,"octubre"=10,"noviembre"=11,"diciembre"=12)
   dict[[m]] %||% NA_integer_
@@ -32,8 +30,6 @@ suppressPackageStartupMessages({
   x
 }
 
-# image_paths: local PNG/JPGs; month_es/year are vectors (same length) of filename hints.
-# source_image_ids: optional vector of original source paths (if PDFs were converted first)
 extract_openai <- function(image_paths, month_es, year, source_image_ids = NULL,
                            model = Sys.getenv("OPENAI_IMAGE_MODEL", unset = "gpt-4o")) {
   if (length(image_paths) == 0) {
@@ -45,11 +41,13 @@ extract_openai <- function(image_paths, month_es, year, source_image_ids = NULL,
 
   key <- Sys.getenv("OPENAI_API_KEY", "")
   if (!nzchar(key)) cli::cli_abort("OPENAI_API_KEY not set.")
-
   if (is.null(source_image_ids)) source_image_ids <- image_paths
 
   out_rows <- purrr::map2_dfr(seq_along(image_paths), image_paths, function(i, pth) {
-    mo <- month_es[i]; yr <- suppressWarnings(as.integer(year[i])); src <- source_image_ids[i]
+    mo <- month_es[i] %||% NA_character_
+    yr <- suppressWarnings(as.integer(year[i]))
+    src <- source_image_ids[i]
+    mo_num <- .month_es_to_num(mo)
 
     # Build data URL
     ext <- tolower(tools::file_ext(pth))
@@ -58,25 +56,25 @@ extract_openai <- function(image_paths, month_es, year, source_image_ids = NULL,
     b64   <- base64enc::base64encode(bytes)
     data_url <- paste0("data:", mime, ";base64,", b64)
 
-    # Prompt with strict schema + assumptions
-    assume_line <- if (!is.na(yr) && !is.na(.month_es_to_num(mo))) {
-      sprintf("Assume month is '%s' (Spanish) and year is %d unless the poster explicitly shows a different month/year.", mo, yr)
+    assume_line <- if (!is.na(yr) && !is.na(mo_num)) {
+      sprintf("Assume the month is '%s' (Spanish) and the year is %d. Only include dates within that month/year. If any date appears outside that month/year, OMIT it.", mo, yr)
+    } else if (!is.na(mo_num)) {
+      sprintf("Assume the month is '%s' (Spanish). Only include dates within that month.", mo)
     } else {
-      "Use the month/year visible on the poster; if uncertain, omit the row."
+      "Use the month and year visible on the poster; if uncertain, omit the row."
     }
 
-    system_msg <- "You extract structured gig listings from venue posters. Be careful and conservative."
+    system_msg <- "You extract structured gig listings directly from images of venue posters. Be conservative and omit doubtful rows."
     user_text <- paste(
-      "Extract only events that you are confident about.",
+      "Extract only confident events and return STRICT JSON (no commentary).",
       assume_line,
-      "Return STRICT JSON, NO commentary.",
       "Schema:",
       "{ \"items\": [ { \"date\": \"YYYY-MM-DD\", \"band\": \"...\", \"time\": \"HH:MM\" | \"\" } ] }",
       "Rules:",
-      "- Use Spanish month/day names correctly.",
-      "- If a date lacks month/year, use the assumed month/year above.",
-      "- If you are not sure about a row, OMIT it.",
       "- Do not invent bands or times.",
+      "- If time is missing, set it to empty string.",
+      "- If multiple bands share the same date, return multiple items (one per band).",
+      "- If you are not sure about a row, omit it.",
       sep = "\n"
     )
 
@@ -100,7 +98,8 @@ extract_openai <- function(image_paths, month_es, year, source_image_ids = NULL,
     resp <- tryCatch(req_perform(req), error = function(e) e)
     if (inherits(resp, "error")) {
       cli::cli_alert_danger("OpenAI image request failed for {basename(pth)}: {resp$message}")
-      return(tibble(source_image = src, event_date = as.Date(character()), band_name = character(), event_time = character()))
+      return(tibble(source_image = src, event_date = as.Date(character()),
+                    band_name = character(), event_time = character()))
     }
     cont <- resp_body_json(resp, simplifyVector = TRUE)
     raw  <- tryCatch(cont$choices[[1]]$message$content, error = function(e) "")
@@ -109,21 +108,30 @@ extract_openai <- function(image_paths, month_es, year, source_image_ids = NULL,
     parsed <- tryCatch(jsonlite::fromJSON(raw), error = function(e) NULL)
     if (is.null(parsed) || is.null(parsed$items)) {
       cli::cli_alert_warning("OpenAI image returned non-JSON or empty items for {basename(pth)}")
-      return(tibble(source_image = src, event_date = as.Date(character()), band_name = character(), event_time = character()))
+      return(tibble(source_image = src, event_date = as.Date(character()),
+                    band_name = character(), event_time = character()))
     }
 
-    items <- parsed$items
-    if (length(items) == 0) {
-      return(tibble(source_image = src, event_date = as.Date(character()), band_name = character(), event_time = character()))
+    items <- as_tibble(parsed$items)
+    if (!nrow(items)) {
+      return(tibble(source_image = src, event_date = as.Date(character()),
+                    band_name = character(), event_time = character()))
     }
 
-    tibble(
-      source_image = src,
-      event_date   = suppressWarnings(lubridate::as_date(items$date)),
-      band_name    = items$band %||% "",
-      event_time   = items$time %||% ""
-    ) %>%
+    out <- items %>%
+      transmute(
+        source_image = src,
+        event_date   = suppressWarnings(lubridate::as_date(.data$date)),
+        band_name    = .data$band %||% "",
+        event_time   = .data$time %||% ""
+      ) %>%
       filter(!is.na(event_date) & nzchar(band_name))
+
+    # Post-filter strictly by month/year (from filename hints)
+    if (!is.na(mo_num)) out <- out %>% filter(lubridate::month(event_date) == mo_num)
+    if (!is.na(yr))     out <- out %>% filter(lubridate::year(event_date)  == yr)
+
+    out
   })
 
   out_rows
