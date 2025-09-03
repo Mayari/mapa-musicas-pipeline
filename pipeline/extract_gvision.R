@@ -61,7 +61,6 @@ suppressPackageStartupMessages({
   if (auth_mode == "oauth") req <- req_auth_bearer_token(req, token = token)
   resp <- req_perform(req)
   cont <- resp_body_json(resp, simplifyVector = TRUE)
-  # Prefer fullTextAnnotation; fallback to textAnnotations[1]
   txt <- tryCatch(cont$responses[[1]]$fullTextAnnotation$text %||% "", error = function(e) "")
   if (!nzchar(txt)) {
     txt <- tryCatch(cont$responses[[1]]$textAnnotations[[1]]$description %||% "", error = function(e) "")
@@ -69,7 +68,6 @@ suppressPackageStartupMessages({
   txt
 }
 
-# Public entrypoint
 extract_gvision <- function(image_paths,
                             language_hints = c("es","en"),
                             feature = NULL) {
@@ -79,10 +77,8 @@ extract_gvision <- function(image_paths,
   endpoint <- "https://vision.googleapis.com/v1/images:annotate"
   if (auth$mode == "apikey") endpoint <- paste0(endpoint, "?key=", auth$key)
 
-  # Decide mode
   mode <- tolower(Sys.getenv("GV_TEXT_MODE", "both"))
   if (!mode %in% c("auto","document","text","both")) mode <- "both"
-  # If caller passed a single feature, honor it unless mode explicitly set
   if (!is.null(feature) && mode == "auto") {
     mode <- if (toupper(feature) == "TEXT_DETECTION") "text" else "document"
   }
@@ -99,7 +95,6 @@ extract_gvision <- function(image_paths,
     }
     img_b64 <- base64enc::base64encode(readBin(pth, what = "raw", n = size))
 
-    # Strategy
     want_doc  <- mode %in% c("document","both")
     want_text <- mode %in% c("text","both")
     txt_doc <- txt_text <- ""
@@ -123,8 +118,11 @@ extract_gvision <- function(image_paths,
       )
     }
 
-    # Pick the longer of the two; if only one was requested, that wins
-    best <- if (mode == "document") txt_doc else if (mode == "text") txt_text else {
+    best <- if (mode == "document") {
+      txt_doc
+    } else if (mode == "text") {
+      txt_text
+    } else {
       if (nchar(txt_text) > nchar(txt_doc)) txt_text else txt_doc
     }
 
@@ -135,5 +133,4 @@ extract_gvision <- function(image_paths,
   results
 }
 
-# Compat alias
 extract_google_vision <- extract_gvision
