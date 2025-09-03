@@ -1,13 +1,20 @@
 # pipeline/run_monthly.R
-# v3.1.2 Vision-first → text-only LLM → optional image LLM fallback + robust validate
+# v3.1.3 Vision-first → text-only LLM → optional image LLM fallback + robust validate
 suppressPackageStartupMessages({
-  library(readr); library(dplyr); library/stringr; library(lubridate)
-  library(tidyr); library(cli); library(glue); library(purrr); library(tibble)
+  library(readr)
+  library(dplyr)
+  library(stringr)
+  library(lubridate)
+  library(tidyr)
+  library(cli)
+  library(glue)
+  library(purrr)
+  library(tibble)
 })
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
-cli::cli_h1(">> run_monthly v3.1.2 (Vision-first → text-only LLM → optional image LLM fallback + robust validate)")
+cli::cli_h1(">> run_monthly v3.1.3 (Vision-first → text-only LLM → optional image LLM fallback + robust validate)")
 
 # ---------------- ARGS ----------------
 args <- commandArgs(trailingOnly = TRUE)
