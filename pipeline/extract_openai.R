@@ -1,5 +1,5 @@
 # pipeline/extract_openai.R
-# v2.5.1 Minimal direct image extraction using OpenAI (strict month/year)
+# v2.5.2 Minimal direct image extraction using OpenAI (strict month/year)
 # - PRIMARY: Chat Completions with function-calling (tool_call) → strict JSON args
 # - FALLBACK: Responses API (json_object)
 # - Saves raw API bodies (and any text we tried to parse) into ocr_debug/
@@ -27,11 +27,10 @@ suppressPackageStartupMessages({
 }
 .json_substring <- function(txt) {
   if (!nzchar(txt)) return(NULL)
-  # try to grab the largest JSON object starting at first '{' and ending at last '}'
-  open <- regexpr("\\{", txt)
+  opens <- gregexpr("\\{", txt)[[1]]
   closes <- gregexpr("\\}", txt)[[1]]
-  if (open[1] == -1 || length(closes) == 0 || closes[1] == -1) return(NULL)
-  substr(txt, open[1], closes[length(closes)])
+  if (length(opens) == 0 || opens[1] == -1 || length(closes) == 0 || closes[1] == -1) return(NULL)
+  substr(txt, opens[1], closes[length(closes)])
 }
 .parse_items <- function(raw) {
   if (is.null(raw) || !nzchar(raw)) return(NULL)
@@ -55,7 +54,7 @@ suppressPackageStartupMessages({
 .call_chat_fc <- function(key, model, data_url, user_text, system_msg, tag) {
   tool_schema <- list(
     type = "function",
-    function = list(
+    `function` = list(  # <— backticked
       name = "return_items",
       description = "Return extracted events as strictly typed JSON",
       parameters = list(
@@ -86,7 +85,7 @@ suppressPackageStartupMessages({
     req_body_json(list(
       model = model,
       temperature = 0,
-      max_tokens = 2000,               # ↑ bigger budget to avoid truncation
+      max_tokens = 2000,
       messages = list(
         list(role = "system", content = system_msg),
         list(role = "user", content = list(
@@ -95,7 +94,7 @@ suppressPackageStartupMessages({
         ))
       ),
       tools = list(tool_schema),
-      tool_choice = list(type = "function", `function` = list(name = "return_items"))
+      tool_choice = list(type = "function", `function` = list(name = "return_items"))  # <— backticked
     ), auto_unbox = TRUE)
 
   resp <- req_perform(req)
@@ -111,7 +110,7 @@ suppressPackageStartupMessages({
     req_body_json(list(
       model = model,
       temperature = 0,
-      max_output_tokens = 2000,        # ↑ bigger budget
+      max_output_tokens = 2000,
       response_format = list(type = "json_object"),
       input = list(
         list(role = "system", content = list(list(type = "input_text", text = system_msg))),
@@ -142,7 +141,7 @@ extract_openai <- function(image_paths, month_es, year, source_image_ids = NULL,
     src    <- source_image_ids[i]
     mo_num <- .month_es_to_num(mo)
 
-    # Build data URL from file path (preprocessed path is passed in)
+    # Build data URL
     ext  <- tolower(tools::file_ext(pth))
     mime <- if (ext %in% c("jpg","jpeg")) "image/jpeg" else if (ext=="png") "image/png" else "image/*"
     size <- file.info(pth)$size
@@ -178,7 +177,7 @@ extract_openai <- function(image_paths, month_es, year, source_image_ids = NULL,
     items <- NULL
     if (res1$status > 0) {
       cont1 <- tryCatch(jsonlite::fromJSON(res1$body, simplifyVector = TRUE), error=function(e) NULL)
-      args_json <- tryCatch(cont1$choices[[1]]$message$tool_calls[[1]]$function$arguments, error=function(e) NULL)
+      args_json <- tryCatch(cont1$choices[[1]]$message$tool_calls[[1]]$`function`$arguments, error=function(e) NULL)
       if (!is.null(args_json) && nzchar(args_json)) {
         args <- tryCatch(jsonlite::fromJSON(args_json), error=function(e) NULL)
         if (!is.null(args$items)) items <- args$items
