@@ -1,8 +1,8 @@
 # pipeline/extract_openai.R
-# v2.3.0 Minimal direct image extraction using OpenAI (strict month/year)
-# - Uses Chat Completions with proper multimodal content:
-#   content = [{type:"text",...}, {type:"image_url", image_url:{url:...}}]
-# - Adds response_format=json_object, HTTP status checks, and debug dumps.
+# v2.4.0 Minimal direct image extraction using OpenAI (strict month/year)
+# - Tries Chat Completions (image_url); if no valid JSON with items, retries with Responses API (input_text/input_image)
+# - Saves raw API bodies and content into ocr_debug/
+# - Optional throttling via OPENAI_THROTTLE_SEC
 
 suppressPackageStartupMessages({
   library(httr2)
@@ -32,8 +32,73 @@ suppressPackageStartupMessages({
   gsub("\\s*```\\s*$", "", x)
 }
 
+.parse_items <- function(raw) {
+  raw2 <- .strip_code_fences(raw)
+  parsed <- tryCatch(jsonlite::fromJSON(raw2), error = function(e) NULL)
+  if (is.null(parsed) || is.null(parsed$items)) return(NULL)
+  parsed$items
+}
+
+.throttle <- function() {
+  sl <- as.numeric(Sys.getenv("OPENAI_THROTTLE_SEC", "0"))
+  if (!is.na(sl) && sl > 0) Sys.sleep(sl)
+}
+
+# --- primary: Chat Completions (image_url) ---
+.call_chat <- function(key, model, data_url, user_text, system_msg, tag) {
+  req <- request("https://api.openai.com/v1/chat/completions") |>
+    req_headers(Authorization = paste("Bearer", key),
+                `Content-Type` = "application/json") |>
+    req_body_json(list(
+      model = model,
+      temperature = 0,
+      max_tokens = 400,
+      response_format = list(type = "json_object"),
+      messages = list(
+        list(role = "system", content = system_msg),
+        list(role = "user", content = list(
+          list(type = "text", text = user_text),
+          list(type = "image_url", image_url = list(url = data_url))
+        ))
+      )
+    ), auto_unbox = TRUE)
+
+  resp <- req_perform(req)
+  status <- resp_status(resp)
+  body   <- resp_body_string(resp)
+  if (!is.null(.debug_dir())) writeLines(body, file.path(.debug_dir(), paste0("openai_chat_", tag, ".json")))
+  list(status = status, body = body)
+}
+
+# --- fallback: Responses API (input_text/input_image) ---
+.call_responses <- function(key, model, data_url, user_text, system_msg, tag) {
+  req <- request("https://api.openai.com/v1/responses") |>
+    req_headers(Authorization = paste("Bearer", key),
+                `Content-Type` = "application/json") |>
+    req_body_json(list(
+      model = model,
+      temperature = 0,
+      max_output_tokens = 400,
+      response_format = list(type = "json_object"),
+      input = list(
+        list(role = "system", content = list(list(type = "input_text", text = system_msg))),
+        list(role = "user", content   = list(
+          list(type = "input_text",  text = user_text),
+          list(type = "input_image", image_url = list(url = data_url))
+        ))
+      )
+    ), auto_unbox = TRUE)
+
+  resp <- req_perform(req)
+  status <- resp_status(resp)
+  body   <- resp_body_string(resp)
+  if (!is.null(.debug_dir())) writeLines(body, file.path(.debug_dir(), paste0("openai_resp_", tag, ".json")))
+  list(status = status, body = body)
+}
+
 extract_openai <- function(image_paths, month_es, year, source_image_ids = NULL,
                            model = Sys.getenv("OPENAI_IMAGE_MODEL", unset = "gpt-4o")) {
+
   if (length(image_paths) == 0) {
     return(tibble(source_image=character(), event_date=as.Date(character()), band_name=character(), event_time=character()))
   }
@@ -47,10 +112,15 @@ extract_openai <- function(image_paths, month_es, year, source_image_ids = NULL,
     src    <- source_image_ids[i]
     mo_num <- .month_es_to_num(mo)
 
-    # Data URL (keeps everything local to request)
+    # Data URL (uses preprocessed image path passed in)
     ext  <- tolower(tools::file_ext(pth))
     mime <- if (ext %in% c("jpg","jpeg")) "image/jpeg" else if (ext=="png") "image/png" else "image/*"
-    bytes <- readBin(pth, what="raw", n=file.info(pth)$size)
+    size <- file.info(pth)$size
+    if (is.na(size) || size <= 0) {
+      cli::cli_alert_warning("OpenAI image: unreadable file {pth}")
+      return(tibble(source_image = src, event_date = as.Date(character()), band_name = character(), event_time = character()))
+    }
+    bytes <- readBin(pth, what="raw", n=size)
     b64   <- base64enc::base64encode(bytes)
     data_url <- paste0("data:", mime, ";base64,", b64)
 
@@ -76,63 +146,60 @@ extract_openai <- function(image_paths, month_es, year, source_image_ids = NULL,
       sep = "\n"
     )
 
-    req <- request("https://api.openai.com/v1/chat/completions") |>
-      req_headers(Authorization = paste("Bearer", key),
-                  `Content-Type` = "application/json") |>
-      req_body_json(list(
-        model = model,
-        temperature = 0,
-        max_tokens = 400,
-        response_format = list(type = "json_object"),
-        messages = list(
-          list(role = "system", content = system_msg),
-          list(role = "user", content = list(
-            list(type = "text", text = user_text),
-            list(type = "image_url", image_url = list(url = data_url))
-          ))
-        )
-      ), auto_unbox = TRUE)
+    tag <- basename(pth)
 
-    resp <- tryCatch(req_perform(req), error = function(e) e)
-    if (inherits(resp, "error")) {
-      cli::cli_alert_danger("OpenAI image HTTP/client error for {basename(pth)}: {resp$message}")
-      if (!is.null(.debug_dir()))
-        writeLines(paste("CLIENT_ERROR:", resp$message),
-                   file.path(.debug_dir(), paste0("openai_image_error_", basename(pth), ".txt")))
-      return(tibble(source_image = src, event_date = as.Date(character()), band_name = character(), event_time = character()))
+    # 1) Chat route
+    res1 <- tryCatch(.call_chat(key, model, data_url, user_text, system_msg, tag), error = function(e) list(status=0, body=paste("CLIENT_ERROR:", e$message)))
+    if (res1$status >= 400) {
+      cli::cli_alert_danger("OpenAI chat HTTP {res1$status} for {basename(pth)}")
+    }
+    items <- NULL
+    if (res1$status > 0) {
+      cont <- tryCatch(jsonlite::fromJSON(res1$body, simplifyVector = TRUE), error=function(e) NULL)
+      raw  <- tryCatch(cont$choices[[1]]$message$content, error=function(e) "")
+      items <- .parse_items(raw)
     }
 
-    status   <- resp_status(resp)
-    raw_body <- tryCatch(resp_body_string(resp), error=function(e) "")
-    if (!is.null(.debug_dir()))
-      writeLines(raw_body, file.path(.debug_dir(), paste0("openai_image_", basename(pth), ".json")))
-    if (status >= 400) {
-      cli::cli_alert_danger("OpenAI image HTTP {status} for {basename(pth)}")
-      return(tibble(source_image = src, event_date = as.Date(character()), band_name = character(), event_time = character()))
+    # 2) If no items, try Responses API
+    if (is.null(items) || length(items) == 0) {
+      res2 <- tryCatch(.call_responses(key, model, data_url, user_text, system_msg, tag), error = function(e) list(status=0, body=paste("CLIENT_ERROR:", e$message)))
+      if (res2$status >= 400) {
+        cli::cli_alert_danger("OpenAI responses HTTP {res2$status} for {basename(pth)}")
+      }
+      cont2 <- tryCatch(jsonlite::fromJSON(res2$body, simplifyVector = TRUE), error=function(e) NULL)
+      # Responses API: prefer aggregated output_text, else first content item with 'type' ~ output_text
+      raw2 <- tryCatch(cont2$output_text, error=function(e) NULL)
+      if (is.null(raw2)) {
+        raw2 <- tryCatch({
+          parts <- cont2$output[[1]]$content
+          # find first text chunk
+          idx <- which(vapply(parts, function(x) identical(x$type, "output_text"), logical(1)))
+          if (length(idx) > 0) parts[[idx[1]]]$text else ""
+        }, error=function(e) "")
+      }
+      items <- .parse_items(raw2)
     }
 
-    cont <- tryCatch(jsonlite::fromJSON(raw_body, simplifyVector = TRUE), error=function(e) NULL)
-    if (is.null(cont)) {
-      cli::cli_alert_warning("OpenAI image returned non-JSON (parse fail) for {basename(pth)}")
-      return(tibble(source_image = src, event_date = as.Date(character()), band_name = character(), event_time = character()))
-    }
-
-    raw <- tryCatch(cont$choices[[1]]$message$content, error=function(e) "")
-    raw <- .strip_code_fences(raw)
-    parsed <- tryCatch(jsonlite::fromJSON(raw), error=function(e) NULL)
-    if (is.null(parsed) || is.null(parsed$items)) {
+    if (is.null(items) || length(items) == 0) {
       cli::cli_alert_warning("OpenAI image returned non-JSON or empty items for {basename(pth)}")
-      if (!is.null(.debug_dir()))
-        writeLines(raw, file.path(.debug_dir(), paste0("openai_image_content_", basename(pth), ".txt")))
+      if (!is.null(.debug_dir())) {
+        # also save the stricter plain text we tried to parse (if any)
+        try({
+          if (exists("raw") && nzchar(raw)) writeLines(raw,  file.path(.debug_dir(), paste0("openai_chat_content_", tag, ".txt")))
+          if (exists("raw2") && nzchar(raw2)) writeLines(raw2, file.path(.debug_dir(), paste0("openai_resp_content_", tag, ".txt")))
+        }, silent = TRUE)
+      }
+      .throttle()
       return(tibble(source_image = src, event_date = as.Date(character()), band_name = character(), event_time = character()))
     }
 
-    items <- as_tibble(parsed$items)
-    if (!nrow(items)) {
+    items_df <- as_tibble(items)
+    if (!nrow(items_df)) {
+      .throttle()
       return(tibble(source_image = src, event_date = as.Date(character()), band_name = character(), event_time = character()))
     }
 
-    out <- items %>%
+    out <- items_df %>%
       transmute(
         source_image = src,
         event_date   = suppressWarnings(lubridate::as_date(.data$date)),
@@ -141,10 +208,11 @@ extract_openai <- function(image_paths, month_es, year, source_image_ids = NULL,
       ) %>%
       filter(!is.na(event_date) & nzchar(band_name))
 
-    # Strict post-filter by filename month/year
+    # Strict month/year post-filter
     if (!is.na(mo_num)) out <- out %>% filter(lubridate::month(event_date) == mo_num)
     if (!is.na(yr))     out <- out %>% filter(lubridate::year(event_date)  == yr)
 
+    .throttle()
     out
   })
 
