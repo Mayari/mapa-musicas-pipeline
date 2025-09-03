@@ -120,4 +120,131 @@ preproc_image_cli <- function(in_path, out_dir, target_width = 1800L) {
 }
 
 pre_dir <- if (is.null(debug_dir)) tempdir() else file.path(debug_dir, "preproc")
-dir.create(pre_dir, s_
+dir.create(pre_dir, showWarnings = FALSE, recursive = TRUE)
+eff_df <- eff_df %>%
+  mutate(preproc_path = purrr::map_chr(effective_path, ~ preproc_image_cli(.x, pre_dir, target_width = 1800L)))
+
+# ---- Provider selection: vision | openai | auto ----
+provider_env <- tolower(Sys.getenv("OCR_PROVIDER", unset = "auto"))
+has_vision   <- nzchar(Sys.getenv("GCP_VISION_API_KEY")) || nzchar(Sys.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+provider <- dplyr::case_when(
+  provider_env %in% c("vision", "openai", "auto") ~ provider_env,
+  TRUE ~ "auto"
+)
+if (provider == "auto") provider <- if (has_vision) "vision" else "openai"
+cli::cli_alert_info("OCR provider selection: {provider} (vision_cred={has_vision})")
+
+# ---- Helpers ----
+run_openai_image_pipeline <- function(df) {
+  source("pipeline/extract_openai.R")
+  # IMPORTANT: avoid {} so cli/glue doesn't try to interpolate
+  cli::cli_alert_info("[extract_openai.R] strict-month image -> date / band / time")
+  extract_openai(
+    image_paths      = df$effective_path,   # PNG for PDFs; original for JPG/PNG
+    month_es         = df$month_name_es,
+    year             = df$year,
+    source_image_ids = df$source_image
+  )
+}
+
+# ---- MAIN EXECUTION ----
+min_chars <- 60L
+
+if (nrow(eff_df) == 0) {
+
+  all_extracted <- tibble(
+    source_image = character(),
+    event_date   = as.Date(character()),
+    band_name    = character(),
+    event_time   = character()
+  )
+
+} else if (provider == "openai") {
+
+  all_extracted <- run_openai_image_pipeline(eff_df)
+
+} else {
+
+  # Vision-first with per-image fallback to OpenAI image when Vision text is short
+  cand_files <- c("pipeline/extract_gvision.R", "pipeline/extract_google_vision.R")
+  for (f in cand_files) {
+    if (file.exists(f)) try(source(f), silent = TRUE)
+  }
+  if (!exists("extract_gvision") && !exists("extract_google_vision")) {
+    stop("No Vision helper found (expected pipeline/extract_gvision.R or extract_google_vision.R).")
+  }
+  gv <- if (exists("extract_gvision")) extract_gvision else extract_google_vision
+
+  # 1) Vision OCR
+  ocr_raw <- gv(eff_df$preproc_path, language_hints = c("es", "en"), feature = "DOCUMENT_TEXT_DETECTION") %>%
+    rename(preproc_path = source_image)
+
+  ocr_df <- eff_df %>%
+    left_join(ocr_raw, by = "preproc_path") %>%
+    mutate(nchar_ocr = nchar(ocr_text %||% ""))
+
+  # 2) Text-only extractor on sufficiently long OCR
+  source("pipeline/extract_openai_text.R")
+  cli::cli_alert_info("[extract_openai_text.R] strict-month (band+date+time only)")
+
+  llm_in <- ocr_df %>%
+    filter(nchar_ocr >= min_chars) %>%
+    transmute(source_image, ocr_text, month_name_es, year)
+
+  from_text <- if (nrow(llm_in) == 0) {
+    cli::cli_alert_warning("Vision OCR produced < {min_chars} chars for all images. Falling back to OpenAI image for all.")
+    tibble(source_image = character(), event_date = as.Date(character()), band_name = character(), event_time = character())
+  } else {
+    extract_openai_text(llm_in)
+  }
+
+  # 3) For short OCR images, fallback to OpenAI image just for those
+  short_df <- ocr_df %>% filter(nchar_ocr < min_chars)
+  from_image <- if (nrow(short_df) > 0) {
+    cli::cli_alert_info("OpenAI image fallback for {nrow(short_df)} poster(s) with short OCR.")
+    idx <- match(short_df$source_image, eff_df$source_image)
+    run_openai_image_pipeline(eff_df[idx, ])
+  } else {
+    tibble(source_image = character(), event_date = as.Date(character()), band_name = character(), event_time = character())
+  }
+
+  # 4) Combine both sources (dedupe)
+  all_extracted <- bind_rows(from_text, from_image) %>%
+    distinct(source_image, event_date, band_name, event_time, .keep_all = TRUE)
+}
+
+# Ensure one row per poster for per-image counts
+all_extracted <- eff_df %>%
+  select(source_image) %>% distinct() %>%
+  left_join(all_extracted, by = "source_image")
+
+per_image_counts <- all_extracted %>%
+  group_by(source_image) %>%
+  summarise(events = sum(!is.na(event_date) & nzchar(coalesce(band_name, ""))), .groups = "drop")
+
+cli::cli_alert_info("Per-image extracted events:")
+print(per_image_counts, n = nrow(per_image_counts))
+
+# ---- Validation / merges / outputs ----
+source("pipeline/validate.R")
+cli::cli_alert_info("[validate.R] minimal + per-venue manual overrides + safe-venue-cols")
+
+validated <- validate(
+  extracted   = all_extracted,
+  meta        = usable_meta,
+  venues_path = venues_path,
+  images_dir  = images_dir
+)
+
+perf_path <- file.path(out_dir, "performances_monthly.csv")
+write_csv(validated$performances, perf_path)
+cli::cli_alert_success("Wrote: {perf_path}")
+
+dir.create(agg_dir, showWarnings = FALSE, recursive = TRUE)
+agg_muni_path  <- file.path(agg_dir, "events_by_municipality.csv")
+agg_state_path <- file.path(agg_dir, "events_by_state.csv")
+write_csv(validated$agg_municipality, agg_muni_path)
+write_csv(validated$agg_state,       agg_state_path)
+cli::cli_alert_success("Wrote aggregations to: {agg_dir}")
+
+cli::cli_alert_success("Done.")
