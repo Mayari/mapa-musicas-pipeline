@@ -1,20 +1,13 @@
 # pipeline/run_monthly.R
-# v3.1.3 Vision-first → text-only LLM → optional image LLM fallback + robust validate
+# v3.1.4 Vision-first → text-only LLM → optional image LLM fallback + robust validate
 suppressPackageStartupMessages({
-  library(readr)
-  library(dplyr)
-  library(stringr)
-  library(lubridate)
-  library(tidyr)
-  library(cli)
-  library(glue)
-  library(purrr)
-  library(tibble)
+  library(readr); library(dplyr); library(stringr); library(lubridate)
+  library(tidyr); library(cli); library(glue); library(purrr); library(tibble)
 })
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
-cli::cli_h1(">> run_monthly v3.1.3 (Vision-first → text-only LLM → optional image LLM fallback + robust validate)")
+cli::cli_h1(">> run_monthly v3.1.4 (Vision → text-only LLM → optional image LLM fallback)")
 
 # ---------------- ARGS ----------------
 args <- commandArgs(trailingOnly = TRUE)
@@ -91,7 +84,7 @@ eff_df <- usable_meta %>%
          effective_path = ifelse(ext=="pdf", pdf_to_png_once(source_image, eff_dir), source_image)) %>%
   select(source_image, effective_path, year, month_name_es)
 
-# ---------------- OPTIONAL PREPROCESS (ImageMagick) ----------------
+# ---------------- OPTIONAL PREPROCESS ----------------
 has_convert <- nzchar(Sys.which("convert"))
 preprocess_on <- tolower(Sys.getenv("GV_PREPROCESS", "on")) != "off" && has_convert
 if (!has_convert && !is.null(debug_dir)) writeLines("convert not found; skipping preprocess", file.path(debug_dir, "preprocess_note.txt"))
@@ -117,25 +110,16 @@ if (!is.null(debug_dir)) {
                    file.path(debug_dir, "image_sizes.csv"))
 }
 
-# ---------------- PROVIDER (Vision) ----------------
+# ---------------- OCR: GOOGLE VISION ----------------
 provider <- tolower(Sys.getenv("OCR_PROVIDER", "vision"))
 has_vision <- nzchar(Sys.getenv("GCP_VISION_API_KEY")) || nzchar(Sys.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
 if (provider == "auto") provider <- if (has_vision) "vision" else "openai"
 cli::cli_alert_info(glue("OCR provider selection: {provider} (vision_cred={has_vision})"))
 
-# ---------------- OCR: GOOGLE VISION ----------------
 source("pipeline/extract_gvision.R")
 gv_df <- extract_gvision(eff_df$preproc_path) %>%
   rename(preproc_path = source_image) %>%
   mutate(nchar_ocr = nchar(ocr_text %||% ""))
-
-# Optional: write a quick sample of text into debug_dir
-if (!is.null(debug_dir) && nrow(gv_df) > 0) {
-  for (i in seq_len(min(3, nrow(gv_df)))) {
-    writeLines(substr(gv_df$ocr_text[i] %||% "", 1, 500),
-               file.path(debug_dir, paste0("vision_preview_", i, ".txt")))
-  }
-}
 
 ocr_df <- eff_df %>% left_join(gv_df, by = "preproc_path")
 
@@ -147,12 +131,20 @@ llm_in <- ocr_df %>% filter(nchar_ocr > 0) %>% transmute(source_image, ocr_text,
 from_text <- if (nrow(llm_in) > 0) extract_openai_text(llm_in) else
   tibble(source_image=character(), event_date=as.Date(character()), band_name=character(), event_time=character())
 
-# ---------------- OPTIONAL IMAGE-LLM FALLBACK ----------------
+# Log how many rows we actually got per poster (before any fallback)
+if (!is.null(debug_dir)) {
+  counts_text <- from_text %>%
+    group_by(source_image) %>%
+    summarise(n = n(), .groups="drop")
+  readr::write_csv(counts_text, file.path(debug_dir, "from_text_counts.csv"))
+}
+
+# ---------------- OPTIONAL IMAGE-LLM FALLBACK (OFF by default) ----------------
 use_img_fallback <- tolower(Sys.getenv("EXTRACT_IMAGE_FALLBACK","off")) %in% c("on","true","1","yes")
 from_image <- tibble(source_image=character(), event_date=as.Date(character()), band_name=character(), event_time=character())
 
 if (use_img_fallback) {
-  no_rows <- eff_df$source_image[!(eff_df$source_image %in% from_text$source_image)]
+  no_rows <- setdiff(eff_df$source_image, unique(from_text$source_image))
   if (length(no_rows) > 0 && nzchar(Sys.getenv("OPENAI_API_KEY",""))) {
     source("pipeline/extract_openai.R")
     idx <- match(no_rows, eff_df$source_image)
