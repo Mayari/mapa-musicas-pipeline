@@ -1,5 +1,5 @@
 # pipeline/extract_openai_text.R
-# v3.0.0 text-only parse of OCR into {date, band, time}; strict month/year
+# v3.1.0 text-only parse of OCR into {date, band, time}; strict month/year + throttle
 suppressPackageStartupMessages({
   library(httr2); library(jsonlite); library(cli); library(tibble)
   library(dplyr); library(purrr); library(lubridate); library(stringr)
@@ -7,6 +7,10 @@ suppressPackageStartupMessages({
 
 `%||%` <- function(a,b) if (!is.null(a)) a else b
 .debug_dir <- function() getOption("mapa.debug_dir", NULL)
+.throttle <- function() {
+  sl <- suppressWarnings(as.numeric(Sys.getenv("OPENAI_THROTTLE_SEC","0")))
+  if (!is.na(sl) && sl > 0) Sys.sleep(sl)
+}
 
 .month_es_to_num <- function(m) {
   if (is.null(m) || is.na(m)) return(NA_integer_)
@@ -24,7 +28,6 @@ suppressPackageStartupMessages({
   raw2 <- .strip_code(raw)
   parsed <- tryCatch(jsonlite::fromJSON(raw2), error=function(e) NULL)
   if (is.null(parsed)) {
-    # salvage largest {...}
     open <- regexpr("\\{", raw2); closes <- gregexpr("\\}", raw2)[[1]]
     if (open[1] != -1 && length(closes)>0 && closes[1]!=-1) {
       maybe <- substr(raw2, open[1], closes[length(closes)])
@@ -66,6 +69,7 @@ suppressPackageStartupMessages({
                    list(role="user",   content=list(list(type="input_text", text=user_text))))
     ), auto_unbox = TRUE)
   resp1 <- tryCatch(req_perform(req1), error=function(e) NULL)
+  .throttle()
 
   raw <- ""
   if (!is.null(resp1)) {
@@ -91,6 +95,8 @@ suppressPackageStartupMessages({
       )
     ), auto_unbox = TRUE)
   resp2 <- tryCatch(req_perform(req2), error=function(e) NULL)
+  .throttle()
+
   if (is.null(resp2)) return(NULL)
   js2 <- tryCatch(resp_body_json(resp2, simplifyVector=TRUE), error=function(e) NULL)
   raw2 <- tryCatch(js2$choices[[1]]$message$content, error=function(e) "")
@@ -104,7 +110,6 @@ extract_openai_text <- function(df,
   # df columns: source_image, ocr_text, month_name_es, year
   if (nrow(df)==0) return(tibble(source_image=character(), event_date=as.Date(character()), band_name=character(), event_time=character()))
   key <- Sys.getenv("OPENAI_API_KEY","")
-  use_regex <- FALSE
   if (!nzchar(key)) {
     cli::cli_alert_warning("OPENAI_API_KEY not set. Text-only extraction will be skipped.")
     return(tibble(source_image=character(), event_date=as.Date(character()), band_name=character(), event_time=character()))
@@ -128,6 +133,5 @@ extract_openai_text <- function(df,
       filter(!is.na(event_date) & nzchar(band_name))
   })
 
-  # De-dup per poster/date/band/time
   rows %>% distinct(source_image, event_date, band_name, event_time, .keep_all = TRUE)
 }
