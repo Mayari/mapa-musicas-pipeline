@@ -151,4 +151,96 @@ extract_openai <- function(image_paths, month_es, year, source_image_ids = NULL,
       return(tibble(source_image = src, event_date = as.Date(character()), band_name = character(), event_time = character()))
     }
     bytes <- readBin(pth, what="raw", n=size)
-    b64   <- base64enc::base64encode(b
+    b64   <- base64enc::base64encode(bytes)
+    data_url <- paste0("data:", mime, ";base64,", b64)
+
+    assume_line <- if (!is.na(yr) && !is.na(mo_num)) {
+      sprintf("Assume the month is '%s' (Spanish) and the year is %d. Only include dates within that month/year; omit anything outside.", mo, yr)
+    } else if (!is.na(mo_num)) {
+      sprintf("Assume the month is '%s' (Spanish). Only include dates within that month.", mo)
+    } else {
+      "Use the visible month/year; if uncertain, omit the row."
+    }
+
+    system_msg <- "You extract structured gig listings directly from venue posters. Be conservative and omit doubtful rows."
+    user_text  <- paste(
+      "Extract only confident events.",
+      assume_line,
+      "Return items with keys: date (YYYY-MM-DD), band (string), time (HH:MM or empty).",
+      "If time is missing, use empty string. If unsure about a row, omit it.",
+      sep = "\n"
+    )
+    tag <- basename(pth)
+
+    # 1) Chat with function-calling
+    res1 <- tryCatch(.call_chat_fc(key, model, data_url, user_text, system_msg, tag),
+                     error = function(e) list(status=0, body=paste("CLIENT_ERROR:", e$message)))
+    items <- NULL
+    if (res1$status > 0) {
+      cont1 <- tryCatch(jsonlite::fromJSON(res1$body, simplifyVector = TRUE), error=function(e) NULL)
+      args_json <- tryCatch(cont1$choices[[1]]$message$tool_calls[[1]]$function$arguments, error=function(e) NULL)
+      if (!is.null(args_json) && nzchar(args_json)) {
+        args <- tryCatch(jsonlite::fromJSON(args_json), error=function(e) NULL)
+        if (!is.null(args$items)) items <- args$items
+      } else {
+        raw <- tryCatch(cont1$choices[[1]]$message$content, error=function(e) "")
+        if (!is.null(.debug_dir()) && nzchar(raw))
+          writeLines(raw, file.path(.debug_dir(), paste0("openai_chat_content_", tag, ".txt")))
+        items <- .parse_items(raw)
+      }
+      if (res1$status >= 400) cli::cli_alert_danger("OpenAI chat HTTP {res1$status} for {basename(pth)}")
+    }
+
+    # 2) Fallback: Responses API
+    if (is.null(items) || length(items) == 0) {
+      res2 <- tryCatch(.call_responses(key, model, data_url, user_text, system_msg, tag),
+                       error = function(e) list(status=0, body=paste("CLIENT_ERROR:", e$message)))
+      cont2 <- tryCatch(jsonlite::fromJSON(res2$body, simplifyVector = TRUE), error=function(e) NULL)
+      raw2 <- ""
+      if (!is.null(cont2)) {
+        raw2 <- tryCatch(cont2$output_text, error=function(e) NULL)
+        if (is.null(raw2)) {
+          raw2 <- tryCatch({
+            parts <- cont2$output[[1]]$content
+            idx <- which(vapply(parts, function(x) identical(x$type, "output_text"), logical(1)))
+            if (length(idx) > 0) parts[[idx[1]]]$text else ""
+          }, error=function(e) "")
+        }
+      }
+      if (!is.null(.debug_dir()) && nzchar(raw2))
+        writeLines(raw2, file.path(.debug_dir(), paste0("openai_resp_content_", tag, ".txt")))
+      items <- .parse_items(raw2)
+      if (res2$status >= 400) cli::cli_alert_danger("OpenAI responses HTTP {res2$status} for {basename(pth)}")
+    }
+
+    if (is.null(items) || length(items) == 0) {
+      cli::cli_alert_warning("OpenAI image returned non-JSON or empty items for {basename(pth)}")
+      .throttle()
+      return(tibble(source_image = src, event_date = as.Date(character()), band_name = character(), event_time = character()))
+    }
+
+    items_df <- as_tibble(items)
+    if (!nrow(items_df)) {
+      .throttle()
+      return(tibble(source_image = src, event_date = as.Date(character()), band_name = character(), event_time = character()))
+    }
+
+    out <- items_df %>%
+      transmute(
+        source_image = src,
+        event_date   = suppressWarnings(lubridate::as_date(.data$date)),
+        band_name    = .data$band %||% "",
+        event_time   = .data$time %||% ""
+      ) %>%
+      filter(!is.na(event_date) & nzchar(band_name))
+
+    # Strict month/year post-filter
+    if (!is.na(mo_num)) out <- out %>% filter(lubridate::month(event_date) == mo_num)
+    if (!is.na(yr))     out <- out %>% filter(lubridate::year(event_date)  == yr)
+
+    .throttle()
+    out
+  })
+
+  out_rows
+}
