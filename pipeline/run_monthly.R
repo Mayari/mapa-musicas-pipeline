@@ -1,5 +1,5 @@
 # pipeline/run_monthly.R
-# v2.0.1 Vision/OpenAI only (no Tesseract) + minimal OpenAI text pass + manual overrides + debug
+# v2.1.0 Vision/OpenAI only + strict month/year + manual overrides + debug
 
 suppressPackageStartupMessages({
   library(readr)
@@ -13,7 +13,7 @@ suppressPackageStartupMessages({
   library(tibble)
 })
 
-cli::cli_h1(">> run_monthly v2.0.1 (Vision/OpenAI only + minimal + overrides + debug)")
+cli::cli_h1(">> run_monthly v2.1.0 (Vision/OpenAI only + strict month/year + overrides + debug)")
 
 # ---- Args ----
 args <- commandArgs(trailingOnly = TRUE)
@@ -75,7 +75,7 @@ meta_df <- purrr::map_df(poster_paths, parse_filename)
 usable_meta <- meta_df %>% filter(!is.na(venue_guess), !is.na(year))
 cli::cli_alert_info("Parsed metadata rows (usable): {nrow(usable_meta)}")
 
-# ---- Convert first page of PDFs to PNG (for Vision/OpenAI image) ----
+# ---- Convert first page of PDFs to PNG ----
 pdf_to_png_once <- function(pdf_path, out_dir) {
   base <- tools::file_path_sans_ext(basename(pdf_path))
   out  <- file.path(out_dir, paste0(base, "_page1"))
@@ -107,28 +107,25 @@ cli::cli_alert_info("OCR provider selection: {provider} (vision_cred={has_vision
 
 # ---- OCR/extraction functions ----
 
-# Vision: OCR text -> minimal OpenAI text extractor
+# Vision: OCR text -> strict minimal OpenAI text extractor (with month/year hints)
 run_vision_pipeline <- function(df) {
-  # Load Vision helper (your repo has extract_gvision.R)
   cand_files <- c("pipeline/extract_gvision.R", "pipeline/extract_google_vision.R")
   for (f in cand_files) if (file.exists(f)) try(source(f), silent = TRUE)
-  if (!exists("extract_gvision") && !exists("extract_google_vision")) {
-    stop("No Vision helper found (expected pipeline/extract_gvision.R or extract_google_vision.R).")
-  }
+  stopifnot(exists("extract_gvision") || exists("extract_google_vision"))
   gv <- if (exists("extract_gvision")) extract_gvision else extract_google_vision
 
   ocr_df <- gv(df$effective_path, language_hints = c("es","en"), feature = "DOCUMENT_TEXT_DETECTION") %>%
     rename(effective_path = source_image)
   ocr_df <- df %>% left_join(ocr_df, by = "effective_path") %>%
-    select(source_image, ocr_text)
+    select(source_image, ocr_text, month_name_es, year)
 
-  # Minimal text extractor over OCR text
   source("pipeline/extract_openai_text.R")
-  cli::cli_alert_info("[extract_openai_text.R] v2025-09-02 minimal (band+date+time only)")
+  cli::cli_alert_info("[extract_openai_text.R] v2025-09-02 strict-month (band+date+time only)")
+
   min_chars <- 60L
   llm_in <- ocr_df %>%
     mutate(use_llm = nchar(ocr_text) >= min_chars) %>%
-    filter(use_llm) %>% select(source_image, ocr_text)
+    filter(use_llm) %>% select(source_image, ocr_text, month_name_es, year)
 
   if (nrow(llm_in) == 0) {
     cli::cli_alert_warning("Vision OCR produced < {min_chars} chars for all images; skipping text-only pass.")
@@ -138,28 +135,13 @@ run_vision_pipeline <- function(df) {
                   event_time = character()))
   }
 
-  ex <- extract_openai_text(llm_in)
-
-  # Normalize expected column names
-  if (!"event_date" %in% names(ex)) {
-    hit <- intersect(names(ex), c("event_date","date"))
-    if (length(hit)) ex <- dplyr::rename(ex, event_date = !!hit[1])
-  }
-  if (!"band_name" %in% names(ex)) {
-    hit <- intersect(names(ex), c("band_name","band"))
-    if (length(hit)) ex <- dplyr::rename(ex, band_name = !!hit[1])
-  }
-  if (!"event_time" %in% names(ex)) {
-    hit <- intersect(names(ex), c("event_time","time","hora"))
-    if (length(hit)) ex <- dplyr::rename(ex, event_time = !!hit[1])
-  }
-  ex
+  extract_openai_text(llm_in)  # returns strict-month filtered rows
 }
 
-# OpenAI image: direct minimal extraction (no OCR)
+# OpenAI image: direct minimal extraction (strict month/year)
 run_openai_image_pipeline <- function(df) {
-  source("pipeline/extract_openai.R")  # <- your filename
-  cli::cli_alert_info("[extract_openai.R] minimal direct image → {date,band,time}")
+  source("pipeline/extract_openai.R")
+  cli::cli_alert_info("[extract_openai.R] strict-month image → {date,band,time}")
   extract_openai(
     image_paths = df$effective_path,
     month_es = df$month_name_es,
