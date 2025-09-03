@@ -1,6 +1,5 @@
 # pipeline/validate.R
-# v3.2.0 — robust manual CSV parsing, safe column handling, venue join, and overrides
-
+# v3.2.1 — robust manual CSV parsing, safe column handling, venue join, overrides
 suppressPackageStartupMessages({
   library(readr)
   library(dplyr)
@@ -23,12 +22,10 @@ suppressPackageStartupMessages({
   x
 }
 
-.norm_key <- function(x) {
-  tolower(.norm_space(x))
-}
+.norm_key <- function(x) tolower(.norm_space(x))
 
-.weekday_es <- function(d) {
-  # 1=Sunday .. 7=Saturday in lubridate::wday()
+weekday_es <- function(d) {
+  # lubridate::wday: 1 = Sunday .. 7 = Saturday
   dias <- c("domingo","lunes","martes","miércoles","jueves","viernes","sábado")
   dias[lubridate::wday(d)]
 }
@@ -41,19 +38,14 @@ suppressPackageStartupMessages({
 }
 
 .parse_date_flex <- function(x) {
-  # Accept "YYYY-MM-DD" or "DD-MM-YYYY" / "DD/MM/YYYY"
-  # If parse fails, return NA
   x <- as.character(x %||% "")
   if (!nzchar(x)) return(as.Date(NA))
-  a <- suppressWarnings(ymd(x))
-  if (!is.na(a)) return(a)
-  b <- suppressWarnings(dmy(x))
-  if (!is.na(b)) return(b)
+  a <- suppressWarnings(ymd(x)); if (!is.na(a)) return(a)
+  b <- suppressWarnings(dmy(x)); if (!is.na(b)) return(b)
   as.Date(NA)
 }
 
 .norm_time <- function(x) {
-  # Extract "HH:MM" if present; otherwise try to coerce "9pm" -> "21:00"
   s <- as.character(x %||% "")
   s <- tolower(.norm_space(s))
   hhmm <- stringr::str_match(s, "(\\b\\d{1,2})[:h.](\\d{2})")[,2:3, drop=FALSE]
@@ -63,7 +55,6 @@ suppressPackageStartupMessages({
       return(sprintf("%02d:%02d", h, m))
     }
   }
-  # Try "9 pm" / "9pm" / "21h"
   m_pm <- str_detect(s, "pm\\b")
   m_am <- str_detect(s, "am\\b")
   h1   <- suppressWarnings(as.integer(str_match(s, "\\b(\\d{1,2})\\s*(am|pm)?\\b")[,2]))
@@ -75,19 +66,29 @@ suppressPackageStartupMessages({
   ""
 }
 
-# If a name_patches.csv exists, apply quick replacements (from -> to)
 .apply_name_patches <- function(df) {
+  # Safe "from -> to" venue renames from data/name_patches.csv (if present)
   if (!file.exists("data/name_patches.csv")) return(df)
   patches <- tryCatch(readr::read_csv("data/name_patches.csv", show_col_types = FALSE), error=function(e) NULL)
-  if (is.null(patches)) return(df)
+  if (is.null(patches) || nrow(patches)==0) return(df)
+
+  names(patches) <- tolower(names(patches))
   from_col <- intersect(names(patches), c("from","src","old"))[1]
   to_col   <- intersect(names(patches), c("to","dest","new"))[1]
   if (is.na(from_col) || is.na(to_col)) return(df)
   if (!("venue" %in% names(df))) return(df)
-  map <- setNames(patches[[to_col]], .norm_key(patches[[from_col]]))
+
+  # Build a safe name map and use single-bracket indexing (returns NA instead of error)
+  key_from <- .norm_key(patches[[from_col]])
+  key_to   <- as.character(patches[[to_col]])
+  map <- setNames(key_to, key_from)
+
   df$venue <- vapply(df$venue, function(v) {
-    k <- .norm_key(v); map[[k]] %||% v
+    k <- .norm_key(v)
+    mapped <- map[k]            # length-1 named vector; NA if not found
+    if (length(mapped)==1 && !is.na(mapped)) as.character(mapped) else v
   }, FUN.VALUE = character(1))
+
   df
 }
 
@@ -113,16 +114,9 @@ suppressPackageStartupMessages({
                     band_name=character(), event_time=character()))
     }
 
-    # Normalize column names
     names(df) <- tolower(names(df))
+    venue <- .safe_get(df, "venue"); if (is.null(venue)) venue <- tools::file_path_sans_ext(basename(fp))
 
-    # Derive venue if missing, from filename (without extension)
-    venue <- .safe_get(df, "venue")
-    if (is.null(venue)) {
-      venue <- tools::file_path_sans_ext(basename(fp))
-    }
-
-    # Get a date column from any accepted shape
     d1 <- .safe_get(df, "event_date")
     d2 <- .safe_get(df, "date")
     y  <- .safe_get(df, "year")
@@ -130,34 +124,27 @@ suppressPackageStartupMessages({
     dy <- .safe_get(df, "day")
 
     date_vec <- NULL
-    if (!is.null(d1)) date_vec <- d1
-    else if (!is.null(d2)) date_vec <- d2
-    # If still NULL, try to compose from y/m/d
+    if (!is.null(d1)) date_vec <- d1 else if (!is.null(d2)) date_vec <- d2
     if (is.null(date_vec) && !is.null(y) && !is.null(mo) && !is.null(dy)) {
       date_vec <- .maybe_make_date(y, mo, dy)
     }
 
-    # Parse dates flexibly
     if (is.null(date_vec)) {
       event_date <- as.Date(rep(NA, nrow(df)))
+    } else if (inherits(date_vec, "Date")) {
+      event_date <- as.Date(date_vec)
     } else {
-      if (inherits(date_vec, "Date")) {
-        event_date <- as.Date(date_vec)
-      } else {
-        event_date <- vapply(as.character(date_vec), .parse_date_flex, FUN.VALUE = as.Date(NA))
-      }
+      event_date <- vapply(as.character(date_vec), .parse_date_flex, FUN.VALUE = as.Date(NA))
     }
 
-    # Band name from band_name or band
     band <- .safe_get(df, "band_name") %||% .safe_get(df, "band")
     if (is.null(band)) band <- rep("", nrow(df))
 
-    # Time from event_time or time or hora
     time_raw <- .safe_get(df, "event_time") %||% .safe_get(df, "time") %||% .safe_get(df, "hora")
     if (is.null(time_raw)) time_raw <- rep("", nrow(df))
     event_time <- vapply(time_raw, .norm_time, FUN.VALUE = character(1))
 
-    out <- tibble(
+    tibble(
       source     = "manual",
       venue      = .norm_space(venue),
       event_date = as.Date(event_date),
@@ -165,8 +152,6 @@ suppressPackageStartupMessages({
       event_time = event_time
     ) %>%
       filter(!is.na(event_date) & nzchar(band_name))
-
-    out
   })
 }
 
@@ -188,10 +173,8 @@ suppressPackageStartupMessages({
   }
   names(v) <- tolower(names(v))
 
-  # Pick best-guess columns
   vname <- intersect(names(v), c("venue","name","nombre","lugar","sala","espacio"))[1]
   if (is.na(vname)) {
-    # No recognizable name column — return empty to skip join
     return(tibble(
       venue=character(), municipality=character(), state=character(),
       latitude=numeric(), longitude=numeric(), venue_id=character()
@@ -222,10 +205,8 @@ suppressPackageStartupMessages({
 # ---------------- main validate ----------------
 
 validate <- function(extracted, meta, venues_path = "data/venues.csv", images_dir = "../carteleras") {
-  # Ensure extracted has expected columns
-  if (!all(c("source_image","event_date","band_name","event_time") %in% names(extracted))) {
-    stop("validate(): 'extracted' must have columns: source_image, event_date, band_name, event_time")
-  }
+  stopifnot(all(c("source_image","event_date","band_name","event_time") %in% names(extracted)))
+
   extracted <- extracted %>%
     mutate(
       event_date = as.Date(event_date),
@@ -233,32 +214,23 @@ validate <- function(extracted, meta, venues_path = "data/venues.csv", images_di
       event_time = as.character(event_time %||% "")
     )
 
-  # Meta: map source_image -> venue_guess
   meta2 <- meta %>%
     mutate(venue_guess = .norm_space(.data$venue_guess %||% "")) %>%
     select(source_image, venue_guess) %>%
     distinct()
 
-  # Join meta onto extracted, derive final venue (may still be empty)
   extracted_enriched <- extracted %>%
     left_join(meta2, by = "source_image") %>%
     mutate(venue = .norm_space(venue_guess)) %>%
     select(venue, event_date, band_name, event_time, source_image)
 
-  # Manual overrides
-  manual <- .read_manual_events() %>%
-    .apply_name_patches()
-
-  # If manual has blank venue, try to backfill from extracted/meta for same source_image (rare)
-  # (we keep it simple: assume manual includes the venue string)
+  manual <- .read_manual_events() %>% .apply_name_patches()
   manual <- manual %>% filter(nzchar(venue))
 
-  # Override rule: manual rows replace any extracted rows for the same (venue + event_date)
   if (nrow(manual) > 0) {
     override_keys <- manual %>%
       mutate(k = paste0(.norm_key(venue), "||", as.character(event_date))) %>%
-      pull(k) %>%
-      unique()
+      pull(k) %>% unique()
 
     extracted_enriched <- extracted_enriched %>%
       mutate(k = paste0(.norm_key(venue), "||", as.character(event_date))) %>%
@@ -270,43 +242,34 @@ validate <- function(extracted, meta, venues_path = "data/venues.csv", images_di
     filter(!is.na(event_date) & nzchar(band_name) & nzchar(venue)) %>%
     distinct(venue, event_date, band_name, event_time, .keep_all = TRUE)
 
-  # Venue metadata join
   venues_df <- .read_venues(venues_path)
-  if (nrow(venues_df) == 0) {
-    # No venue metadata; fill blanks
-    joined <- combined %>%
-      mutate(
-        municipality = "",
-        state        = "",
-        latitude     = as.numeric(NA),
-        longitude    = as.numeric(NA),
-        venue_id     = NA_character_
-      )
+  joined <- if (nrow(venues_df) == 0) {
+    combined %>% mutate(
+      municipality = "",
+      state        = "",
+      latitude     = as.numeric(NA),
+      longitude    = as.numeric(NA),
+      venue_id     = NA_character_
+    )
   } else {
-    joined <- combined %>%
-      left_join(venues_df, by = c("venue" = "venue"))
+    combined %>% left_join(venues_df, by = c("venue" = "venue"))
   }
 
-  # Weekday (Spanish)
   performances <- joined %>%
     mutate(
-      weekday = .weekday_es(event_date),
+      weekday   = weekday_es(event_date),
       event_time = as.character(event_time %||% "")
     ) %>%
     select(venue, event_date, weekday, band_name, event_time,
            municipality, state, latitude, longitude, venue_id) %>%
     arrange(state, municipality, venue, event_date, band_name)
 
-  # Aggregations (monthly)
   if (nrow(performances) > 0) {
-    month_col <- floor_date(performances$event_date, unit = "month")
-    perf2 <- performances %>% mutate(month = month_col)
-
+    perf2 <- performances %>% mutate(month = floor_date(event_date, unit = "month"))
     agg_municipality <- perf2 %>%
       group_by(state, municipality, month) %>%
       summarise(events = n(), .groups = "drop") %>%
       arrange(state, municipality, month)
-
     agg_state <- perf2 %>%
       group_by(state, month) %>%
       summarise(events = n(), .groups = "drop") %>%
@@ -317,7 +280,7 @@ validate <- function(extracted, meta, venues_path = "data/venues.csv", images_di
   }
 
   list(
-    performances    = performances,
+    performances     = performances,
     agg_municipality = agg_municipality,
     agg_state        = agg_state
   )
