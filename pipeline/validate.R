@@ -61,7 +61,15 @@ apply_name_patches <- function(df){
 }
 
 validate_events <- function(df, venues_df = NULL){
-  if (!nrow(df)) return(df)
+  if (!nrow(df)) {
+    return(tibble(
+      venue=character(), event_date=as.Date(character()), weekday=character(),
+      band_name=character(), event_time=character(),
+      municipality=character(), state=character(),
+      latitude=double(), longitude=double(),
+      event_title=character(), venue_id=character()
+    ))
+  }
 
   df <- df %>%
     mutate(
