@@ -1,234 +1,116 @@
-# pipeline/extract_openai_text.R
-# v3.3.0 text-only parse of OCR into {date, band, time}; strict month/year; retries; throttle
 suppressPackageStartupMessages({
-  library(httr2); library(jsonlite); library(cli); library(tibble)
-  library(dplyr); library(purrr); library(lubridate); library(stringr); library(digest)
+  library(httr2)
+  library(jsonlite)
+  library(tidyverse)
+  library(glue)
 })
 
-`%||%` <- function(a,b) if (!is.null(a)) a else b
-.debug_dir <- function() getOption("mapa.debug_dir", NULL)
-.throttle <- function() {
-  sl <- suppressWarnings(as.numeric(Sys.getenv("OPENAI_THROTTLE_SEC","0")))
-  if (!is.na(sl) && sl > 0) Sys.sleep(sl)
+message("[extract_openai_text.R] vBASE (text-only; band/date/time; optional event_title)")
+
+OPENAI_API_KEY <- Sys.getenv("OPENAI_API_KEY")
+TEXT_MODEL     <- Sys.getenv("OPENAI_TEXT_MODEL")
+FALLBACK       <- Sys.getenv("OPENAI_MODEL")
+if (!nzchar(TEXT_MODEL)) TEXT_MODEL <- FALLBACK
+if (!nzchar(TEXT_MODEL)) TEXT_MODEL <- "gpt-4.1"
+
+`%||%` <- function(a,b) if (!is.null(a) && !is.na(a) && length(a)>0 && nzchar(a)) a else b
+
+make_prompt_text <- function(venue_name, year, month, ocr_chars){
+  glue(
+"Convierte este texto de una cartelera en JSON *minificado* con el esquema:
+{{\"venue\":\"{venue_name}\",\"year\":{year},\"month\":{month},\"events\":[{{\"date\":\"YYYY-MM-DD\",\"band\":\"<artista>\",\"time\":null,\"event\":null}}]}}
+
+Reglas:
+- Incluye una entrada por actuación con fecha explícita (día del mes) y nombre de artista/banda legible.
+- Si ves una hora explícita (21:00, 9pm, 20:30) ponla en \"time\"; si no, usa null.
+- Si aparece un *título de evento* (p. ej., \"Valentine’s Jazz Day\"), puedes colocarlo en \"event\"; si no, usa null.
+- **No inventes**. Si la fecha o el nombre de la banda no están claros, omite esa entrada.
+- SOLO responde con el objeto JSON pedido, sin texto adicional.
+
+Texto OCR (recortado a 12k chars):
+---
+{substr(ocr_chars %||% "", 1, 12000)}
+---"
+  )
 }
 
-.month_es_to_num <- function(m) {
-  if (is.null(m) || is.na(m)) return(NA_integer_)
-  m <- tolower(str_trim(m))
-  dict <- c("enero"=1,"febrero"=2,"marzo"=3,"abril"=4,"mayo"=5,"junio"=6,
-            "julio"=7,"agosto"=8,"septiembre"=9,"setiembre"=9,"octubre"=10,"noviembre"=11,"diciembre"=12)
-  dict[[m]] %||% NA_integer_
-}
-
-.strip_code <- function(x) {
-  x <- gsub("^\\s*```(json)?\\s*", "", x); gsub("\\s*```\\s*$", "", x)
-}
-
-.parse_items_from_string <- function(raw) {
-  # Accept either {"items":[...]} or a bare array of objects
-  if (is.null(raw) || !nzchar(raw)) return(NULL)
-  raw2 <- .strip_code(raw)
-  parsed <- tryCatch(jsonlite::fromJSON(raw2), error=function(e) NULL)
-  if (is.null(parsed)) {
-    # try to trim to largest {...} block
-    open <- regexpr("\\{", raw2); closes <- gregexpr("\\}", raw2)[[1]]
-    if (open[1] != -1 && length(closes)>0 && closes[1]!=-1) {
-      maybe <- substr(raw2, open[1], closes[length(closes)])
-      parsed <- tryCatch(jsonlite::fromJSON(maybe), error=function(e) NULL)
+extract_json_snippet <- function(x){
+  if (is.null(x) || is.na(x) || !nzchar(x)) return(NA_character_)
+  ok <- tryCatch({ fromJSON(x); TRUE }, error = function(e) FALSE)
+  if (ok) return(x)
+  starts <- gregexpr("[\\[{]", x, perl = TRUE)[[1]]
+  if (starts[1] == -1) return(NA_character_)
+  for (s in starts){
+    snippet <- substring(x, s, nchar(x))
+    for (e in seq(nchar(snippet), max(1, nchar(snippet)-4000), by=-1)){
+      cand <- substring(snippet, 1, e)
+      ok <- tryCatch({ fromJSON(cand); TRUE }, error = function(e) FALSE)
+      if (ok) return(cand)
     }
   }
-  if (is.null(parsed)) return(NULL)
-  if (!is.null(parsed$items)) return(parsed$items)
-  if (is.list(parsed) && !is.null(parsed[[1]]$date)) return(parsed)
-  NULL
+  NA_character_
 }
 
-# Build a strict JSON Schema for the Responses API
-.schema_items <- function() {
-  list(
-    name = "gig_items",
-    schema = list(
-      type = "object",
-      additionalProperties = FALSE,
-      properties = list(
-        items = list(
-          type  = "array",
-          items = list(
-            type = "object",
-            additionalProperties = FALSE,
-            properties = list(
-              date = list(type="string", pattern="^\\d{4}-\\d{2}-\\d{2}$"),
-              band = list(type="string", minLength=1),
-              time = list(type="string")  # allow "" when missing
-            ),
-            required = list("date","band","time")
-          )
-        )
-      ),
-      required = list("items")
-    )
-  )
-}
+json_to_tibble_text <- function(x, venue_name){
+  if (is.null(x) || is.na(x)) return(tibble())
+  obj <- tryCatch(fromJSON(x, simplifyVector = TRUE), error=function(e) NULL)
+  if (is.null(obj) || is.null(obj$events)) return(tibble())
 
-# ---- OpenAI calls -------------------------------------------------------------
+  ev <- if (is.data.frame(obj$events)) obj$events else tibble::as_tibble(obj$events)
+  # Accept event_title optional
+  if (!("date" %in% names(ev) && "band" %in% names(ev))) return(tibble())
 
-.call_responses_json <- function(key, model, user_text, system_msg, tag) {
-  req <- request("https://api.openai.com/v1/responses") |>
-    req_headers(Authorization=paste("Bearer", key), `Content-Type`="application/json") |>
-    req_body_json(list(
-      model = model,
-      temperature = 0,
-      max_output_tokens = 1800,
-      response_format = list(type="json_schema", json_schema=.schema_items()),
-      input = list(
-        list(role="system", content=list(list(type="input_text", text=system_msg))),
-        list(role="user",   content=list(list(type="input_text", text=user_text)))
-      )
-    ), auto_unbox = TRUE)
-
-  resp <- tryCatch(req_perform(req), error=function(e) NULL)
-  .throttle()
-
-  if (is.null(resp)) return(NULL)
-  body <- resp_body_json(resp, simplifyVector=TRUE)
-  if (!is.null(.debug_dir())) {
-    fp <- file.path(.debug_dir(), paste0("openai_text_responses_", tag, ".json"))
-    writeLines(jsonlite::toJSON(body, auto_unbox=TRUE, pretty=TRUE), fp, useBytes=TRUE)
-  }
-  # Responses JSON: prefer output_text; if absent, scan output parts
-  raw <- body$output_text %||% ""
-  if (!nzchar(raw)) {
-    raw <- tryCatch({
-      parts <- body$output[[1]]$content
-      idx <- which(vapply(parts, function(x) identical(x$type, "output_text"), logical(1)))
-      if (length(idx)>0) parts[[idx[1]]]$text else ""
-    }, error=function(e) "")
-  }
-  .parse_items_from_string(raw)
-}
-
-.call_chat_fc <- function(key, model, user_text, system_msg, tag) {
-  tool_schema <- list(
-    type="function",
-    `function`=list(
-      name="return_items",
-      description="Return extracted events as strictly typed JSON",
-      parameters=list(
-        type="object",
-        additionalProperties=FALSE,
-        properties=list(
-          items=list(
-            type="array",
-            items=list(
-              type="object",
-              additionalProperties=FALSE,
-              properties=list(
-                date=list(type="string"), band=list(type="string"), time=list(type="string")
-              ),
-              required=list("date","band","time")
-            )
-          )
-        ),
-        required=list("items")
-      )
-    )
-  )
-
-  req <- request("https://api.openai.com/v1/chat/completions") |>
-    req_headers(Authorization=paste("Bearer", key), `Content-Type`="application/json") |>
-    req_body_json(list(
-      model=model, temperature=0, max_tokens=2000,
-      messages=list(list(role="system", content=system_msg),
-                    list(role="user",   content=user_text)),
-      tools=list(tool_schema),
-      tool_choice=list(type="function", `function`=list(name="return_items"))
-    ), auto_unbox=TRUE)
-
-  resp <- tryCatch(req_perform(req), error=function(e) NULL)
-  .throttle()
-  if (is.null(resp)) return(NULL)
-
-  body <- resp_body_json(resp, simplifyVector=TRUE)
-  if (!is.null(.debug_dir())) {
-    fp <- file.path(.debug_dir(), paste0("openai_text_chat_", tag, ".json"))
-    writeLines(jsonlite::toJSON(body, auto_unbox=TRUE, pretty=TRUE), fp, useBytes=TRUE)
-  }
-  args_json <- tryCatch(body$choices[[1]]$message$tool_calls[[1]]$`function`$arguments, error=function(e) NULL)
-  if (!is.null(args_json) && nzchar(args_json)) {
-    args <- tryCatch(jsonlite::fromJSON(args_json), error=function(e) NULL)
-    if (!is.null(args$items)) return(args$items) else return(NULL)
-  }
-  raw <- tryCatch(body$choices[[1]]$message$content, error=function(e) "")
-  .parse_items_from_string(raw)
-}
-
-# ---- One OCR → items ----------------------------------------------------------
-
-.extract_one <- function(key, text, mo_es, yr, text_model, tag) {
-  mo_num <- .month_es_to_num(mo_es)
-
-  system_msg <- "Eres un extractor de carteleras musicales. Devuelve solo filas confiables; omite las dudosas."
-  user_text <- paste(
-    "Texto OCR (es/en):\n---\n", text, "\n---\n",
-    if (!is.na(yr) && !is.na(mo_num))
-      sprintf("Asume que el mes es '%s' y el año es %d. Incluye solo fechas dentro de ese mes/año.", mo_es, yr)
-    else if (!is.na(mo_num))
-      sprintf("Asume que el mes es '%s'. Incluye solo fechas dentro de ese mes.", mo_es)
-    else
-      "Si no hay mes/año claro, intenta deducirlo; si no estás seguro, omite la fila.",
-    "\n\nDevuelve JSON estrictamente del tipo {\"items\": [{\"date\":\"YYYY-MM-DD\",\"band\":\"...\",\"time\":\"HH:MM\"|\"\"}]}",
-    sep=""
-  )
-
-  # Try Responses JSON first, then Chat+tools; two total attempts if empty
-  for (attempt in 1:2) {
-    items <- .call_responses_json(key, text_model, user_text, system_msg, tag)
-    if (!is.null(items) && length(items)) break
-    items <- .call_chat_fc(key, text_model, user_text, system_msg, tag)
-    if (!is.null(items) && length(items)) break
-  }
-  if (is.null(items) || !length(items)) return(NULL)
-
-  # Canonicalize and filter programmatically by month/year
-  out <- tibble::as_tibble(items) %>%
-    transmute(
-      event_date = suppressWarnings(lubridate::as_date(.data$date)),
-      band_name  = as.character(.data$band %||% ""),
-      event_time = as.character(.data$time %||% "")
+  ev %>%
+    mutate(
+      venue        = obj$venue %||% venue_name,
+      event_date   = suppressWarnings(as.Date(.data$date)),
+      band_name    = as.character(.data$band),
+      event_time   = if ("time"  %in% names(.)) as.character(.data$time)  else NA_character_,
+      event_title  = if ("event" %in% names(.)) as.character(.data$event) else NA_character_,
+      venue_id     = NA_character_
     ) %>%
-    filter(!is.na(event_date) & nzchar(band_name))
-
-  if (!is.na(mo_num)) out <- dplyr::filter(out, lubridate::month(event_date) == mo_num)
-  if (!is.na(yr))     out <- dplyr::filter(out, lubridate::year(event_date)  == yr)
-
-  out
+    filter(!is.na(event_date), nzchar(band_name)) %>%
+    select(venue, venue_id, event_date, band_name, event_time, event_title)
 }
 
-# ---- Public entry -------------------------------------------------------------
-
-extract_openai_text <- function(df,
-                                text_model = Sys.getenv("OPENAI_TEXT_MODEL","gpt-4.1")) {
-  # df columns: source_image, ocr_text, month_name_es, year
-  if (nrow(df)==0) {
-    return(tibble(source_image=character(), event_date=as.Date(character()), band_name=character(), event_time=character()))
-  }
-  key <- Sys.getenv("OPENAI_API_KEY","")
-  if (!nzchar(key)) {
-    cli::cli_alert_warning("OPENAI_API_KEY not set. Text-only extraction will be skipped.")
-    return(tibble(source_image=character(), event_date=as.Date(character()), band_name=character(), event_time=character()))
-  }
-
-  purrr::pmap_dfr(df, function(source_image, ocr_text, month_name_es, year) {
-    tag <- tools::file_path_sans_ext(basename(source_image))
-    rows <- .extract_one(key, ocr_text, month_name_es, year, text_model, tag)
-    if (is.null(rows) || nrow(rows)==0) {
-      return(tibble(source_image = source_image,
-                    event_date   = as.Date(character()),
-                    band_name    = character(),
-                    event_time   = character()))
-    }
-    rows %>% mutate(source_image = !!source_image) %>%
-      select(source_image, event_date, band_name, event_time)
-  }) %>%
-    distinct(source_image, event_date, band_name, event_time, .keep_all = TRUE)
+call_openai_chat_text <- function(prompt){
+  body <- list(
+    model = TEXT_MODEL,
+    messages = list(list(role="user", content=list(list(type="text", text=prompt)))),
+    response_format = list(type="json_object")
+  )
+  req <- request("https://api.openai.com/v1/chat/completions") |>
+    req_headers(Authorization = paste("Bearer", OPENAI_API_KEY),
+                "Content-Type" = "application/json") |>
+    req_body_json(body, auto_unbox = TRUE)
+  resp <- tryCatch(req_perform(req), error=function(e) e)
+  if (inherits(resp, "error")) return(list(status = NA_integer_, text = NA_character_))
+  st <- resp_status(resp)
+  txt <- tryCatch({
+    rj <- resp_body_json(resp)
+    msg <- rj$choices[[1]]$message
+    if (is.character(msg$content)) msg$content else
+      if (is.list(msg$content) && length(msg$content)>0 && !is.null(msg$content[[1]]$text))
+        paste0(vapply(msg$content, function(p) p$text %||% "", character(1L)), collapse="\n")
+      else jsonlite::toJSON(msg, auto_unbox = TRUE)
+  }, error=function(e) NA_character_)
+  list(status = st, text = txt)
 }
+
+# Public: text-only extraction from OCR string
+extract_openai_events_from_text <- function(ocr_text, venue_name, year, month){
+  if (!nzchar(OPENAI_API_KEY)) {
+    message("[extract_text] OPENAI_API_KEY missing; skipping.")
+    return(tibble())
+  }
+  prmpt <- make_prompt_text(venue_name, year, month, ocr_text %||% "")
+  r <- call_openai_chat_text(prmpt)
+  message(sprintf("[extract_text] http_status=%s", r$status %||% NA_integer_))
+  if (is.na(r$status) || r$status < 200 || r$status >= 300) return(tibble())
+  snip <- extract_json_snippet(r$text %||% "")
+  out  <- json_to_tibble_text(snip, venue_name)
+  distinct(out, venue, event_date, band_name, event_time, event_title, .keep_all = TRUE)
+}
+
+# alias
+extract_openai_text_events <- extract_openai_events_from_text
