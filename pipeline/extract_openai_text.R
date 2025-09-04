@@ -2,10 +2,9 @@ suppressPackageStartupMessages({
   library(httr2)
   library(jsonlite)
   library(tidyverse)
-  library(glue)
 })
 
-message("[extract_openai_text.R] vBASE (text-only; band/date/time; optional event_title)")
+message("[extract_openai_text.R] vBASE-no-glue (text-only; band/date/time; optional event_title)")
 
 OPENAI_API_KEY <- Sys.getenv("OPENAI_API_KEY")
 TEXT_MODEL     <- Sys.getenv("OPENAI_TEXT_MODEL")
@@ -16,21 +15,15 @@ if (!nzchar(TEXT_MODEL)) TEXT_MODEL <- "gpt-4.1"
 `%||%` <- function(a,b) if (!is.null(a) && !is.na(a) && length(a)>0 && nzchar(a)) a else b
 
 make_prompt_text <- function(venue_name, year, month, ocr_chars){
-  glue(
-"Convierte este texto de una cartelera en JSON *minificado* con el esquema:
-{{\"venue\":\"{venue_name}\",\"year\":{year},\"month\":{month},\"events\":[{{\"date\":\"YYYY-MM-DD\",\"band\":\"<artista>\",\"time\":null,\"event\":null}}]}}
-
-Reglas:
-- Incluye una entrada por actuación con fecha explícita (día del mes) y nombre de artista/banda legible.
-- Si ves una hora explícita (21:00, 9pm, 20:30) ponla en \"time\"; si no, usa null.
-- Si aparece un *título de evento* (p. ej., \"Valentine’s Jazz Day\"), puedes colocarlo en \"event\"; si no, usa null.
-- **No inventes**. Si la fecha o el nombre de la banda no están claros, omite esa entrada.
-- SOLO responde con el objeto JSON pedido, sin texto adicional.
-
-Texto OCR (recortado a 12k chars):
+  ocr <- substr(ocr_chars %||% "", 1, 12000)
+  sprintf(
+'Convierte este texto de una cartelera en JSON minificado con:
+{"venue":"%s","year":%d,"month":%d,"events":[{"date":"YYYY-MM-DD","band":"<artista>","time":null,"event":null}]}
+Reglas: una entrada por actuación con día visible y nombre claro. Si hay hora, ponla en "time"; si no, null. Si hay título de evento, en "event"; si no, null. No inventes; si dudas, omite. SOLO devuelve ese JSON.
 ---
-{substr(ocr_chars %||% "", 1, 12000)}
----"
+%s
+---',
+    venue_name, as.integer(year), as.integer(month), ocr
   )
 }
 
@@ -57,7 +50,6 @@ json_to_tibble_text <- function(x, venue_name){
   if (is.null(obj) || is.null(obj$events)) return(tibble())
 
   ev <- if (is.data.frame(obj$events)) obj$events else tibble::as_tibble(obj$events)
-  # Accept event_title optional
   if (!("date" %in% names(ev) && "band" %in% names(ev))) return(tibble())
 
   ev %>%
@@ -83,8 +75,10 @@ call_openai_chat_text <- function(prompt){
     req_headers(Authorization = paste("Bearer", OPENAI_API_KEY),
                 "Content-Type" = "application/json") |>
     req_body_json(body, auto_unbox = TRUE)
+
   resp <- tryCatch(req_perform(req), error=function(e) e)
   if (inherits(resp, "error")) return(list(status = NA_integer_, text = NA_character_))
+
   st <- resp_status(resp)
   txt <- tryCatch({
     rj <- resp_body_json(resp)
@@ -94,6 +88,7 @@ call_openai_chat_text <- function(prompt){
         paste0(vapply(msg$content, function(p) p$text %||% "", character(1L)), collapse="\n")
       else jsonlite::toJSON(msg, auto_unbox = TRUE)
   }, error=function(e) NA_character_)
+
   list(status = st, text = txt)
 }
 
@@ -112,5 +107,5 @@ extract_openai_events_from_text <- function(ocr_text, venue_name, year, month){
   distinct(out, venue, event_date, band_name, event_time, event_title, .keep_all = TRUE)
 }
 
-# alias
+# alias for callers that used the older name
 extract_openai_text_events <- extract_openai_events_from_text
