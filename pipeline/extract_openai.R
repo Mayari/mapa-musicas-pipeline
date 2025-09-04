@@ -1,175 +1,131 @@
-# pipeline/extract_openai.R
-# v3.1.0 Image-based fallback extractor (adds throttle)
 suppressPackageStartupMessages({
-  library(httr2); library(jsonlite); library(base64enc); library(cli)
-  library(tibble); library(purrr); library(dplyr); library(lubridate); library(stringr)
+  library(httr2)
+  library(jsonlite)
+  library(tidyverse)
+  library(glue)
 })
-`%||%` <- function(a,b) if (!is.null(a)) a else b
-.debug_dir <- function() getOption("mapa.debug_dir", NULL)
-.throttle <- function() {
-  sl <- suppressWarnings(as.numeric(Sys.getenv("OPENAI_THROTTLE_SEC","0")))
-  if (!is.na(sl) && sl > 0) Sys.sleep(sl)
+
+message("[extract_openai.R] vBASE-image (vision only; no OCR)")
+
+OPENAI_API_KEY <- Sys.getenv("OPENAI_API_KEY")
+IMG_MODEL      <- Sys.getenv("OPENAI_IMAGE_MODEL")
+FALLBACK       <- Sys.getenv("OPENAI_MODEL")
+if (!nzchar(IMG_MODEL)) IMG_MODEL <- FALLBACK
+if (!nzchar(IMG_MODEL)) IMG_MODEL <- "gpt-4o"
+
+`%||%` <- function(a,b) if (!is.null(a) && !is.na(a) && length(a)>0 && nzchar(a)) a else b
+
+img_to_data_uri <- function(path){
+  ext <- tolower(tools::file_ext(path))
+  if (!ext %in% c("jpg","jpeg","png")) {
+    message(sprintf("[extract:image] skipping non-image file: %s", basename(path)))
+    return(NA_character_)
+  }
+  mime <- ifelse(ext %in% c("jpg","jpeg"), "image/jpeg", "image/png")
+  raw <- readBin(path, what = "raw", n = file.info(path)$size)
+  paste0("data:", mime, ";base64,", jsonlite::base64_enc(raw))
 }
 
-.month_es_to_num <- function(m) {
-  if (is.null(m) || is.na(m)) return(NA_integer_)
-  m <- tolower(str_trim(m))
-  dict <- c("enero"=1,"febrero"=2,"marzo"=3,"abril"=4,"mayo"=5,"junio"=6,
-            "julio"=7,"agosto"=8,"septiembre"=9,"setiembre"=9,"octubre"=10,"noviembre"=11,"diciembre"=12)
-  dict[[m]] %||% NA_integer_
-}
+make_prompt_image <- function(venue_name, year, month){
+  glue(
+"Convierte la cartelera mensual en JSON *minificado* con este esquema exacto:
+{{\"venue\":\"{venue_name}\",\"year\":{year},\"month\":{month},\"events\":[{{\"date\":\"YYYY-MM-DD\",\"band\":\"<artista>\",\"time\":null,\"event\":null}}]}}
 
-.call_chat_fc <- function(key, model, data_url, user_text, system_msg, tag) {
-  tool_schema <- list(
-    type="function",
-    `function`=list(
-      name="return_items",
-      description="Return extracted events as strictly typed JSON",
-      parameters=list(
-        type="object",
-        properties=list(items=list(type="array", items=list(
-          type="object",
-          properties=list(
-            date=list(type="string"),
-            band=list(type="string"),
-            time=list(type="string")
-          ),
-          required=list("date","band","time"),
-          additionalProperties=FALSE
-        ))),
-        required=list("items"),
-        additionalProperties=FALSE
-      )
-    )
+Reglas:
+- Crea una entrada por cada **actuación con día del mes visible** y nombre claro.
+- Si hay hora (21:00, 9pm, 20:30) ponla en \"time\"; si no, usa null.
+- Si hay un título de evento (p. ej., \"Valentine’s Jazz Day\"), colócalo en \"event\"; si no, null.
+- **No inventes**. Si dudas de la fecha o del nombre, omite esa entrada.
+- Responde **solo** con el objeto JSON (sin comentarios/markdown)."
   )
-  req <- request("https://api.openai.com/v1/chat/completions") |>
-    req_headers(Authorization=paste("Bearer", key), `Content-Type`="application/json") |>
-    req_body_json(list(
-      model=model, temperature=0, max_tokens=2000,
-      messages=list(
-        list(role="system", content=system_msg),
-        list(role="user", content=list(
-          list(type="text", text=user_text),
-          list(type="image_url", image_url=list(url=data_url, detail="high"))
-        ))
-      ),
-      tools=list(tool_schema),
-      tool_choice=list(type="function", `function`=list(name="return_items"))
-    ), auto_unbox=TRUE)
-  resp <- req_perform(req)
-  .throttle()
-  list(status=resp_status(resp), body=resp_body_string(resp))
 }
 
-.call_responses <- function(key, model, data_url, user_text, system_msg, tag) {
-  req <- request("https://api.openai.com/v1/responses") |>
-    req_headers(Authorization=paste("Bearer", key), `Content-Type`="application/json") |>
-    req_body_json(list(
-      model=model, temperature=0, max_output_tokens=2000,
-      response_format=list(type="json_object"),
-      input=list(
-        list(role="system", content=list(list(type="input_text", text=system_msg))),
-        list(role="user",   content=list(
-          list(type="input_text",  text=user_text),
-          list(type="input_image", image_url=list(url=data_url))
-        ))
-      )
-    ), auto_unbox=TRUE)
-  resp <- req_perform(req)
-  .throttle()
-  list(status=resp_status(resp), body=resp_body_string(resp))
-}
-
-.parse_items <- function(raw) {
-  raw2 <- gsub("^\\s*```(json)?\\s*", "", raw); raw2 <- gsub("\\s*```\\s*$", "", raw2)
-  parsed <- tryCatch(jsonlite::fromJSON(raw2), error=function(e) NULL)
-  if (is.null(parsed)) {
-    open <- regexpr("\\{", raw2); closes <- gregexpr("\\}", raw2)[[1]]
-    if (open[1] != -1 && length(closes)>0 && closes[1]!=-1) {
-      maybe <- substr(raw2, open[1], closes[length(closes)])
-      parsed <- tryCatch(jsonlite::fromJSON(maybe), error=function(e) NULL)
+extract_json_snippet <- function(x){
+  if (is.null(x) || is.na(x) || !nzchar(x)) return(NA_character_)
+  ok <- tryCatch({ fromJSON(x); TRUE }, error = function(e) FALSE)
+  if (ok) return(x)
+  starts <- gregexpr("[\\[{]", x, perl = TRUE)[[1]]
+  if (starts[1] == -1) return(NA_character_)
+  for (s in starts){
+    snippet <- substring(x, s, nchar(x))
+    for (e in seq(nchar(snippet), max(1, nchar(snippet)-4000), by=-1)){
+      cand <- substring(snippet, 1, e)
+      ok <- tryCatch({ fromJSON(cand); TRUE }, error = function(e) FALSE)
+      if (ok) return(cand)
     }
   }
-  if (is.null(parsed)) return(NULL)
-  if (!is.null(parsed$items)) return(parsed$items)
-  if (is.list(parsed) && !is.null(parsed[[1]]$date)) return(parsed)
-  NULL
+  NA_character_
 }
 
-extract_openai <- function(image_paths, month_es, year, source_image_ids = NULL,
-                           model = Sys.getenv("OPENAI_IMAGE_MODEL","gpt-4o")) {
-  if (length(image_paths)==0) return(tibble(source_image=character(), event_date=as.Date(character()), band_name=character(), event_time=character()))
-  key <- Sys.getenv("OPENAI_API_KEY",""); if (!nzchar(key)) cli::cli_abort("OPENAI_API_KEY not set.")
-  if (is.null(source_image_ids)) source_image_ids <- image_paths
+json_to_tibble_image <- function(x, venue_name, image_path){
+  if (is.null(x) || is.na(x)) return(tibble())
+  obj <- tryCatch(fromJSON(x, simplifyVector = TRUE), error=function(e) NULL)
+  if (is.null(obj) || is.null(obj$events)) return(tibble())
 
-  out <- purrr::map2_dfr(seq_along(image_paths), image_paths, function(i, pth) {
-    mo     <- month_es[i] %||% NA_character_
-    yr     <- suppressWarnings(as.integer(year[i]))
-    src    <- source_image_ids[i]
-    mo_num <- .month_es_to_num(mo)
+  ev <- if (is.data.frame(obj$events)) obj$events else tibble::as_tibble(obj$events)
+  if (!("date" %in% names(ev) && "band" %in% names(ev))) return(tibble())
 
-    ext <- tolower(tools::file_ext(pth))
-    mime <- if (ext %in% c("jpg","jpeg")) "image/jpeg" else if (ext=="png") "image/png" else "image/*"
-    size <- file.info(pth)$size
-    if (is.na(size) || size<=0) return(tibble(source_image=src, event_date=as.Date(character()), band_name=character(), event_time=character()))
-    b64 <- base64enc::base64encode(readBin(pth, "raw", n=size))
-    data_url <- paste0("data:", mime, ";base64,", b64)
+  ev %>%
+    mutate(
+      venue        = obj$venue %||% "",
+      event_date   = suppressWarnings(as.Date(.data$date)),
+      band_name    = as.character(.data$band),
+      event_time   = if ("time"  %in% names(.)) as.character(.data$time)  else NA_character_,
+      event_title  = if ("event" %in% names(.)) as.character(.data$event) else NA_character_,
+      source_image = image_path,
+      venue_id     = NA_character_
+    ) %>%
+    filter(!is.na(event_date), nzchar(band_name)) %>%
+    select(venue, venue_id, event_date, band_name, event_time, event_title, source_image)
+}
 
-    assume <- if (!is.na(yr) && !is.na(mo_num)) sprintf("Assume month '%s' and year %d. Only include dates within that month/year.", mo, yr)
-              else if (!is.na(mo_num))           sprintf("Assume month '%s'. Only include dates within that month.", mo)
-              else "If uncertain about month/year, omit the row."
+call_openai_chat_vision <- function(prompt, data_uri){
+  body <- list(
+    model = IMG_MODEL,
+    messages = list(list(
+      role = "user",
+      content = list(
+        list(type = "text", text = prompt),
+        list(type = "image_url", image_url = list(url = data_uri))
+      )
+    )),
+    response_format = list(type = "json_object")
+  )
 
-    system_msg <- "You extract structured gig listings from posters. Return only confident rows."
-    user_text  <- paste(
-      "Return JSON with items: date (YYYY-MM-DD), band (string), time (HH:MM or empty).",
-      "If multiple bands share a date, return multiple items. Omit doubtful rows.",
-      assume,
-      sep="\n"
-    )
+  req <- request("https://api.openai.com/v1/chat/completions") |>
+    req_headers(Authorization = paste("Bearer", OPENAI_API_KEY),
+                "Content-Type" = "application/json") |>
+    req_body_json(body, auto_unbox = TRUE)
 
-    tag <- basename(pth)
-    res1 <- tryCatch(.call_chat_fc(key, model, data_url, user_text, system_msg, tag), error=function(e) list(status=0, body=paste("ERR:",e$message)))
-    if (!is.null(.debug_dir())) writeLines(res1$body, file.path(.debug_dir(), paste0("openai_img_chat_", tag, ".json")))
-    items <- NULL
-    if (res1$status>0) {
-      cont1 <- tryCatch(jsonlite::fromJSON(res1$body), error=function(e) NULL)
-      args_json <- tryCatch(cont1$choices[[1]]$message$tool_calls[[1]]$`function`$arguments, error=function(e) NULL)
-      if (!is.null(args_json) && nzchar(args_json)) {
-        args <- tryCatch(jsonlite::fromJSON(args_json), error=function(e) NULL)
-        if (!is.null(args$items)) items <- args$items
-      } else {
-        raw <- tryCatch(cont1$choices[[1]]$message$content, error=function(e) "")
-        items <- .parse_items(raw)
-      }
-    }
-    if (is.null(items) || !length(items)) {
-      res2 <- tryCatch(.call_responses(key, model, data_url, user_text, system_msg, tag), error=function(e) list(status=0, body=paste("ERR:",e$message)))
-      if (!is.null(.debug_dir())) writeLines(res2$body, file.path(.debug_dir(), paste0("openai_img_resp_", tag, ".json")))
-      cont2 <- tryCatch(jsonlite::fromJSON(res2$body), error=function(e) NULL)
-      raw2  <- tryCatch(cont2$output_text, error=function(e) NULL) %||% ""
-      if (!nzchar(raw2)) {
-        raw2 <- tryCatch({
-          parts <- cont2$output[[1]]$content
-          idx <- which(vapply(parts, function(x) identical(x$type, "output_text"), logical(1)))
-          if (length(idx)>0) parts[[idx[1]]]$text else ""
-        }, error=function(e) "")
-      }
-      items <- .parse_items(raw2)
-    }
-    if (is.null(items) || !length(items)) {
-      cli::cli_alert_warning("OpenAI image returned non-JSON or empty items for {basename(pth)}")
-      return(tibble(source_image=src, event_date=as.Date(character()), band_name=character(), event_time=character()))
-    }
+  resp <- tryCatch(req_perform(req), error=function(e) e)
+  if (inherits(resp, "error")) return(list(status = NA_integer_, text = NA_character_))
+  st <- resp_status(resp)
+  txt <- tryCatch({
+    rj <- resp_body_json(resp)
+    msg <- rj$choices[[1]]$message
+    if (is.character(msg$content)) msg$content else
+      if (is.list(msg$content) && length(msg$content)>0 && !is.null(msg$content[[1]]$text))
+        paste0(vapply(msg$content, function(p) p$text %||% "", character(1L)), collapse="\n")
+      else jsonlite::toJSON(msg, auto_unbox = TRUE)
+  }, error=function(e) NA_character_)
+  list(status = st, text = txt)
+}
 
-    tibble::as_tibble(items) %>%
-      transmute(
-        source_image = src,
-        event_date   = suppressWarnings(lubridate::as_date(.data$date)),
-        band_name    = .data$band %||% "",
-        event_time   = .data$time %||% ""
-      ) %>%
-      filter(!is.na(event_date) & nzchar(band_name)) %>%
-      { out <- .; if (!is.na(mo_num)) out <- dplyr::filter(out, lubridate::month(event_date)==mo_num); if (!is.na(yr)) out <- dplyr::filter(out, lubridate::year(event_date)==yr); out }
-  })
-  out
+# Public API: extract from image directly (no OCR)
+extract_openai_events <- function(image_path, venue_name, year, month){
+  if (!nzchar(OPENAI_API_KEY)) {
+    message("[extract:image] OPENAI_API_KEY missing; skipping.")
+    return(tibble())
+  }
+  data_uri <- img_to_data_uri(image_path)
+  if (is.na(data_uri)) return(tibble())
+  prompt <- make_prompt_image(venue_name, year, month)
+
+  r <- call_openai_chat_vision(prompt, data_uri)
+  message(sprintf("[image] http_status=%s | %s", r$status %||% NA_integer_, basename(image_path)))
+
+  if (is.na(r$status) || r$status < 200 || r$status >= 300) return(tibble())
+  snip <- extract_json_snippet(r$text %||% "")
+  out  <- json_to_tibble_image(snip, venue_name, image_path)
+  distinct(out, venue, event_date, band_name, event_time, event_title, source_image, .keep_all = TRUE)
 }
