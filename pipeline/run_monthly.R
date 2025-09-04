@@ -1,130 +1,152 @@
-# pipeline/run_monthly.R
-# Minimal, Vision-only run: OCR → rules parser → validate → write
-
+#!/usr/bin/env Rscript
 suppressPackageStartupMessages({
-  library(readr); library(dplyr); library(stringr); library(lubridate)
-  library(tidyr); library(cli); library(glue); library(purrr); library(tibble)
+  library(tidyverse)
+  library(lubridate)
+  library(stringr)
+  library(readr)
+  library(glue)
 })
 
-`%||%` <- function(a,b) if (!is.null(a)) a else b
-cli::cli_h1(">> run_monthly v0.9.0 (Vision-only + rule parser + manual overrides)")
+cat(">> run_monthly vBASE (OCR + text-only extractor; no overrides)\n")
 
-# ---- args ----
+safe_source <- function(path){
+  if (file.exists(path)) {
+    tryCatch({ source(path, chdir = TRUE) ; TRUE },
+             error = function(e){ message(sprintf("!! could not source %s: %s", path, e$message)); FALSE })
+  } else { FALSE }
+}
+
+# Load helpers (best-effort)
+safe_source("pipeline/extract_openai.R")      # ok if missing; we skip image pass anyway
+safe_source("pipeline/extract_openai_text.R")
+safe_source("pipeline/extract_tesseract.R")
+safe_source("pipeline/validate.R")
+
 args <- commandArgs(trailingOnly = TRUE)
-get_arg <- function(flag, default=NULL){ i <- which(args == flag); if (length(i)==0 || i==length(args)) return(default); args[i+1] }
-images_dir  <- get_arg("--images_dir", "../carteleras")
+get_arg <- function(flag, default=NULL){
+  hit <- which(args == flag)
+  if (length(hit) && hit < length(args)) args[hit+1] else default
+}
+
+images_dir <- get_arg("--images_dir", "carteleras")
 venues_path <- get_arg("--venues_path", "data/venues.csv")
-out_dir     <- get_arg("--out_dir", "data")
-agg_dir     <- get_arg("--agg_dir", "data/aggregations")
-debug_dir   <- get_arg("--debug_dir", NULL)
+out_dir   <- get_arg("--out_dir",   "data")
+agg_dir   <- get_arg("--agg_dir",   file.path(out_dir, "aggregations"))
 
-dir.create(out_dir, showWarnings=FALSE, recursive=TRUE)
-dir.create(agg_dir, showWarnings=FALSE, recursive=TRUE)
-if (!is.null(debug_dir)) dir.create(debug_dir, showWarnings=FALSE, recursive=TRUE)
-if (!is.null(debug_dir)) options(mapa.debug_dir = debug_dir)
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(agg_dir, showWarnings = FALSE, recursive = TRUE)
 
-# ---- discover files ----
-is_poster <- function(x) grepl("\\.(jpg|jpeg|png|pdf)$", x, ignore.case=TRUE)
-poster_paths <- list.files(images_dir, pattern = NULL, recursive = TRUE, full.names = TRUE)
-poster_paths <- poster_paths[is_poster(poster_paths)]
-cli::cli_alert_info(glue("Discovered {length(poster_paths)} poster file(s) under: {images_dir}"))
-if (length(poster_paths)>0) cli::cli_alert_info(glue("Example: {paste(head(poster_paths,3), collapse=' | ')}"))
+month_map <- c(
+  "enero"=1, "febrero"=2, "marzo"=3, "abril"=4, "mayo"=5, "junio"=6,
+  "julio"=7, "agosto"=8, "septiembre"=9, "setiembre"=9, "octubre"=10,
+  "noviembre"=11, "diciembre"=12
+)
 
-# ---- parse filenames ----
-parse_filename <- function(path) {
-  b <- basename(path)
-  m <- stringr::str_match(b, "^(.+?)_(\\d{4})([A-Za-zñÑ]+)_(\\d+)\\.(jpg|jpeg|png|pdf)$")
-  if (is.na(m[1,1])) return(tibble(source_image=path, venue_guess=NA_character_, year=NA_integer_, month_name_es=NA_character_, file_num=NA_integer_))
+is_poster <- function(p) grepl("\\.(jpg|jpeg|png|pdf)$", tolower(p))
+all_files <- list.files(images_dir, recursive = TRUE, full.names = TRUE)
+poster_files <- all_files[file.info(all_files)$isdir %in% c(FALSE) & vapply(all_files, is_poster, TRUE)]
+
+if (!length(poster_files)) {
+  message("No poster files found under: ", images_dir)
+  write_csv(tibble(venue=character(), event_date=as.Date(character()), weekday=character(),
+                   band_name=character(), event_time=character(),
+                   municipality=character(), state=character(),
+                   latitude=double(), longitude=double(), event_title=character(), venue_id=character()),
+            file.path(out_dir, "performances_monthly.csv"))
+  write_csv(tibble(), file.path(agg_dir, "events_by_municipality.csv"))
+  write_csv(tibble(), file.path(agg_dir, "events_by_state.csv"))
+  quit(status = 0)
+}
+
+example_str <- paste(head(poster_files, 3), collapse = " | ")
+cat("Discovered", length(poster_files), "poster file(s) under:", images_dir, "\n")
+cat("Example:", example_str, "\n")
+
+parse_one <- function(p){
+  rel <- sub(paste0("^", normalizePath(images_dir), .Platform$file.sep), "", normalizePath(p))
+  parts <- strsplit(rel, .Platform$file.sep, fixed = TRUE)[[1]]
+  state <- if (length(parts) > 1) parts[1] else NA_character_
+
+  file <- tools::file_path_sans_ext(basename(p))
+  toks <- unlist(strsplit(file, "_"))
+  if (length(toks) < 3) return(NULL)
+
+  ym <- toks[length(toks)-1]
+  num <- suppressWarnings(as.integer(toks[length(toks)]))
+  venue_tokens <- toks[1:(length(toks)-2)]
+  venue <- gsub("_", " ", paste(venue_tokens, collapse = "_"))
+  venue <- stringr::str_squish(venue)
+
+  m <- stringr::str_match(ym, "^(\\d{4})([A-Za-zÁÉÍÓÚáéíóúñÑ]+)$")
+  year <- suppressWarnings(as.integer(m[,2]))
+  mes  <- tolower(iconv(m[,3], to="ASCII//TRANSLIT"))
+  month <- month_map[mes] %||% NA_integer_
+
   tibble(
-    source_image  = path,
-    venue_guess   = m[1,2],
-    year          = as.integer(m[1,3]),
-    month_name_es = m[1,4],
-    file_num      = as.integer(m[1,5])
+    source_image = p,
+    state = state,
+    venue = venue,
+    year = year,
+    month = as.integer(month),
+    file_num = num %||% NA_integer_
   )
 }
-meta_df <- purrr::map_df(poster_paths, parse_filename)
-usable_meta <- meta_df %>% filter(!is.na(venue_guess), !is.na(year))
-cli::cli_alert_info(glue("Parsed metadata rows (usable): {nrow(usable_meta)}"))
 
-# ---- PDF → PNG first page (if any) ----
-pdf_to_png_once <- function(pdf_path, out_dir_) {
-  base <- tools::file_path_sans_ext(basename(pdf_path))
-  out  <- file.path(out_dir_, paste0(base, "_page1"))
-  cmd  <- sprintf("pdftoppm -png -f 1 -l 1 -singlefile %s %s", shQuote(pdf_path), shQuote(out))
-  system(cmd, ignore.stdout = TRUE, ignore.stderr = TRUE)
-  png_path <- paste0(out, ".png")
-  if (file.exists(png_path)) png_path else pdf_path
-}
-eff_dir <- if (is.null(debug_dir)) tempdir() else file.path(debug_dir, "pdf_firstpage")
-dir.create(eff_dir, showWarnings=FALSE, recursive=TRUE)
+meta <- purrr::map_dfr(poster_files, function(p) { tryCatch(parse_one(p), error=function(e) NULL) })
+meta <- meta %>% filter(!is.na(year), !is.na(month), nzchar(venue))
+cat("Parsed metadata rows (usable):", nrow(meta), "\n")
+if (!nrow(meta)) stop("No parsable filenames. Check naming convention.")
 
-eff_df <- usable_meta %>%
-  mutate(ext = tolower(tools::file_ext(source_image)),
-         effective_path = ifelse(ext=="pdf", pdf_to_png_once(source_image, eff_dir), source_image)) %>%
-  select(source_image, effective_path, year, month_name_es)
+venues_df <- tryCatch(readr::read_csv(venues_path, show_col_types = FALSE), error = function(e) tibble())
+for (nm in c("venue","municipality","state","latitude","longitude","lat","lon")) if (!nm %in% names(venues_df)) venues_df[[nm]] <- NA
 
-# ---- optional preprocess (ImageMagick) ----
-has_convert <- nzchar(Sys.which("convert"))
-preproc_on  <- tolower(Sys.getenv("GV_PREPROCESS","on")) != "off" && has_convert
-pre_dir <- if (is.null(debug_dir)) tempdir() else file.path(debug_dir, "preproc")
-dir.create(pre_dir, showWarnings=FALSE, recursive=TRUE)
-
-preproc_image_cli <- function(in_path, out_dir_, target_width = as.integer(Sys.getenv("GV_MAX_DIM","1600"))) {
-  ext <- tolower(tools::file_ext(in_path)); if (!ext %in% c("jpg","jpeg","png")) return(in_path)
-  if (!nzchar(Sys.which("convert"))) return(in_path)
-  out <- file.path(out_dir_, basename(in_path))
-  cmd <- sprintf("convert %s -auto-orient -colorspace Gray -filter Lanczos -resize %dx -deskew 40%% -unsharp 0x1+0.75+0.02 -strip %s",
-                 shQuote(in_path), as.integer(target_width), shQuote(out))
-  system(cmd, ignore.stdout = TRUE, ignore.stderr = TRUE)
-  if (file.exists(out)) out else in_path
+get_ocr_text <- function(img){
+  for (fn in c("tesseract_to_text","tesseract_ocr_text","ocr_to_text","ocr_image_text")){
+    if (exists(fn, mode = "function")) return(tryCatch(get(fn)(img), error=function(e) ""))
+  }
+  ""
 }
 
-eff_df <- eff_df %>%
-  mutate(preproc_path = if (preproc_on) purrr::map_chr(effective_path, ~ preproc_image_cli(.x, pre_dir)) else effective_path)
+message("Running Tesseract OCR…")
+ocr_texts <- meta %>% mutate(ocr = purrr::map_chr(source_image, get_ocr_text))
 
-if (!is.null(debug_dir)) {
-  readr::write_csv(eff_df %>% mutate(size_effective=file.info(effective_path)$size, size_preproc=file.info(preproc_path)$size),
-                   file.path(debug_dir, "image_sizes.csv"))
+message("Running OpenAI text-only pass on OCR…")
+extract_text <- function(ocr, v, y, m, src){
+  ev <- tibble()
+  if (exists("extract_openai_events_from_text", mode="function")) {
+    ev <- tryCatch(extract_openai_events_from_text(ocr, v, y, m), error=function(e) tibble())
+  } else if (exists("extract_openai_text_events", mode="function")) {
+    ev <- tryCatch(extract_openai_text_events(ocr, v, y, m), error=function(e) tibble())
+  }
+  if (nrow(ev)) ev <- ev %>% mutate(source_image = src)
+  ev
 }
 
-# ---- OCR (Vision only) ----
-source("pipeline/extract_gvision.R")
-cli::cli_alert_info("Running Google Vision OCR…")
-gv_df <- extract_gvision(eff_df$preproc_path) %>%
-  rename(preproc_path = source_image) %>%
-  mutate(nchar_ocr = nchar(ocr_text %||% ""))
+events_list <- purrr::pmap(meta, function(source_image, state, venue, year, month, file_num){
+  o <- ocr_texts$ocr[ocr_texts$source_image == source_image][1]
+  extract_text(o, venue, year, month, source_image)
+})
 
-ocr_df <- eff_df %>% left_join(gv_df, by = "preproc_path")
-if (!is.null(debug_dir)) writeLines(capture.output(head(ocr_df, 3)), file.path(debug_dir, "ocr_head.txt"))
+events_raw <- bind_rows(events_list)
 
-# ---- Parse OCR text (rules, no LLM) ----
-source("pipeline/parse_text_rules.R")
-cli::cli_alert_info("Parsing OCR text (rule-based)…")
-parsed <- parse_ocr_df(ocr_df %>% transmute(source_image, ocr_text, year, month_name_es))
+clean <- events_raw
+if (!"source_image" %in% names(clean)) clean$source_image <- NA_character_
+per_img <- clean %>% filter(!is.na(source_image)) %>% count(source_image, name = "events")
+cat("Per-image extracted events:\n")
+print(per_img)
 
-# per-image counts
-per_image_counts <- eff_df %>% select(source_image) %>%
-  left_join(parsed %>% group_by(source_image) %>% summarise(events=n(), .groups="drop"),
-            by="source_image") %>% mutate(events = events %||% 0L)
-cli::cli_alert_info("Per-image parsed events:"); print(per_image_counts, n=nrow(per_image_counts))
+if (!exists("validate_events", mode="function")) stop("validate.R not loaded or validate_events() not found.")
+final <- validate_events(events_raw, venues_df = venues_df)
 
-if (!is.null(debug_dir)) readr::write_csv(per_image_counts, file.path(debug_dir, "per_image_counts.csv"))
+outfile <- file.path(out_dir, "performances_monthly.csv")
+readr::write_csv(final, outfile)
+cat("Wrote:", outfile, "\n")
 
-# ---- Validate + write ----
-source("pipeline/validate.R")
-cli::cli_alert_info("[validate.R] join metadata + manual overrides")
-validated <- validate(extracted = parsed %>% mutate(event_time = as.character(event_time %||% "")),
-                      meta = usable_meta,
-                      venues_path = venues_path)
+agg_in <- final %>% mutate(year = year(event_date), month = month(event_date))
+agg_muni <- agg_in %>% count(municipality, year, month, name = "events") %>% arrange(municipality, year, month)
+agg_state <- agg_in %>% count(state, year, month, name = "events") %>% arrange(state, year, month)
+readr::write_csv(agg_muni, file.path(agg_dir, "events_by_municipality.csv"))
+readr::write_csv(agg_state, file.path(agg_dir, "events_by_state.csv"))
+cat("Wrote aggregations to:", agg_dir, "\n")
 
-perf_path <- file.path(out_dir, "performances_monthly.csv")
-dir.create(dirname(perf_path), showWarnings=FALSE, recursive=TRUE)
-write_csv(validated$performances, perf_path)
-cli::cli_alert_success(glue("Wrote: {perf_path}"))
-
-dir.create(agg_dir, showWarnings=FALSE, recursive=TRUE)
-write_csv(validated$agg_municipality, file.path(agg_dir, "events_by_municipality.csv"))
-write_csv(validated$agg_state,       file.path(agg_dir, "events_by_state.csv"))
-cli::cli_alert_success(glue("Wrote aggregations to: {agg_dir}"))
-cli::cli_alert_success("Done.")
+cat("Done.\n")
