@@ -7,7 +7,7 @@ suppressPackageStartupMessages({
   library(glue)
 })
 
-cat(">> run_monthly vBASE (OCR + text-only extractor; no overrides)\n")
+cat(">> run_monthly vBASE-image (vision only; no OCR; no residency rules)\n")
 
 safe_source <- function(path){
   if (file.exists(path)) {
@@ -16,11 +16,10 @@ safe_source <- function(path){
   } else { FALSE }
 }
 
-# Load helpers (best-effort)
-safe_source("pipeline/extract_openai.R")      # ok if missing; we skip image pass anyway
-safe_source("pipeline/extract_openai_text.R")
-safe_source("pipeline/extract_tesseract.R")
-safe_source("pipeline/validate.R")
+# Load helpers we need
+ok1 <- safe_source("pipeline/validate.R")
+ok2 <- safe_source("pipeline/extract_openai.R")
+if (!ok2) stop("pipeline/extract_openai.R is required for image extraction.")
 
 args <- commandArgs(trailingOnly = TRUE)
 get_arg <- function(flag, default=NULL){
@@ -42,17 +41,18 @@ month_map <- c(
   "noviembre"=11, "diciembre"=12
 )
 
-is_poster <- function(p) grepl("\\.(jpg|jpeg|png|pdf)$", tolower(p))
+is_poster <- function(p) grepl("\\.(jpg|jpeg|png)$", tolower(p))  # PDFs skipped in image-only mode
 all_files <- list.files(images_dir, recursive = TRUE, full.names = TRUE)
 poster_files <- all_files[file.info(all_files)$isdir %in% c(FALSE) & vapply(all_files, is_poster, TRUE)]
 
 if (!length(poster_files)) {
   message("No poster files found under: ", images_dir)
-  write_csv(tibble(venue=character(), event_date=as.Date(character()), weekday=character(),
-                   band_name=character(), event_time=character(),
-                   municipality=character(), state=character(),
-                   latitude=double(), longitude=double(), event_title=character(), venue_id=character()),
-            file.path(out_dir, "performances_monthly.csv"))
+  empty <- tibble(venue=character(), event_date=as.Date(character()), weekday=character(),
+                  band_name=character(), event_time=character(),
+                  municipality=character(), state=character(),
+                  latitude=double(), longitude=double(),
+                  event_title=character(), venue_id=character())
+  write_csv(empty, file.path(out_dir, "performances_monthly.csv"))
   write_csv(tibble(), file.path(agg_dir, "events_by_municipality.csv"))
   write_csv(tibble(), file.path(agg_dir, "events_by_state.csv"))
   quit(status = 0)
@@ -100,47 +100,34 @@ if (!nrow(meta)) stop("No parsable filenames. Check naming convention.")
 venues_df <- tryCatch(readr::read_csv(venues_path, show_col_types = FALSE), error = function(e) tibble())
 for (nm in c("venue","municipality","state","latitude","longitude","lat","lon")) if (!nm %in% names(venues_df)) venues_df[[nm]] <- NA
 
-get_ocr_text <- function(img){
-  for (fn in c("tesseract_to_text","tesseract_ocr_text","ocr_to_text","ocr_image_text")){
-    if (exists(fn, mode = "function")) return(tryCatch(get(fn)(img), error=function(e) ""))
-  }
-  ""
-}
-
-message("Running Tesseract OCR…")
-ocr_texts <- meta %>% mutate(ocr = purrr::map_chr(source_image, get_ocr_text))
-
-message("Running OpenAI text-only pass on OCR…")
-extract_text <- function(ocr, v, y, m, src){
-  ev <- tibble()
-  if (exists("extract_openai_events_from_text", mode="function")) {
-    ev <- tryCatch(extract_openai_events_from_text(ocr, v, y, m), error=function(e) tibble())
-  } else if (exists("extract_openai_text_events", mode="function")) {
-    ev <- tryCatch(extract_openai_text_events(ocr, v, y, m), error=function(e) tibble())
-  }
-  if (nrow(ev)) ev <- ev %>% mutate(source_image = src)
-  ev
-}
-
+message("Running OpenAI image extraction…")
 events_list <- purrr::pmap(meta, function(source_image, state, venue, year, month, file_num){
-  o <- ocr_texts$ocr[ocr_texts$source_image == source_image][1]
-  extract_text(o, venue, year, month, source_image)
+  tryCatch(extract_openai_events(source_image, venue, year, month), error=function(e) tibble())
 })
-
 events_raw <- bind_rows(events_list)
 
+# Per-image counts (safe)
 clean <- events_raw
 if (!"source_image" %in% names(clean)) clean$source_image <- NA_character_
 per_img <- clean %>% filter(!is.na(source_image)) %>% count(source_image, name = "events")
 cat("Per-image extracted events:\n")
 print(per_img)
 
+# Validate + join
 if (!exists("validate_events", mode="function")) stop("validate.R not loaded or validate_events() not found.")
 final <- validate_events(events_raw, venues_df = venues_df)
 
 outfile <- file.path(out_dir, "performances_monthly.csv")
 readr::write_csv(final, outfile)
 cat("Wrote:", outfile, "\n")
+
+# Aggregations (guard against empty)
+if (!nrow(final)) {
+  readr::write_csv(tibble(), file.path(agg_dir, "events_by_municipality.csv"))
+  readr::write_csv(tibble(), file.path(agg_dir, "events_by_state.csv"))
+  cat("No rows; wrote empty aggregations.\n")
+  cat("Done.\n"); quit(status = 0)
+}
 
 agg_in <- final %>% mutate(year = year(event_date), month = month(event_date))
 agg_muni <- agg_in %>% count(municipality, year, month, name = "events") %>% arrange(municipality, year, month)
