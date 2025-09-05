@@ -1,0 +1,9 @@
+extractor,sha256,source_image,venue,year,month,events,processed_at
+openai_image,ab8f7fbe757f4ec71105f136a7019e9529a9cd744a4b77fe4cbe14802d149317,../carteleras/Puebla/Jazzatlan_Cholula_2024Enero_1.jpeg,Jazzatlan Cholula,2024,1,12,2025-09-05T01:23:35Z
+openai_image,8ef1bf97d8add34af6bad9d8294f319c73fde3de1fbeaa7a077679b63096a69d,../carteleras/Puebla/Jazzatlan_Cholula_2024Febrero_1.jpg,Jazzatlan Cholula,2024,2,18,2025-09-05T01:23:35Z
+openai_image,1180973b0c80db78c590208c71632c2e18082a9f7d5e32b51768ef6a5c37a0a1,../carteleras/Puebla/Mendrugo_2024Abril_1.jpeg,Mendrugo,2024,4,12,2025-09-05T01:23:35Z
+openai_image,842572f67b5e9260edaa9d03f339a03457a76f5ea973716f6f20ba7e7749ac42,../carteleras/Puebla/Mendrugo_2024Abril_2.jpeg,Mendrugo,2024,4,8,2025-09-05T01:23:35Z
+openai_image,15fae65da1eef69ba7823aab09a40c561e3c97046c3e892e33ccf4d96cb8ae3e,../carteleras/Puebla/Mendrugo_2024Febrero_1.jpeg,Mendrugo,2024,2,12,2025-09-05T01:23:35Z
+openai_image,fb31114b8f810bf36fbfe96ba18597d739ec6797aa8f202ac28ef1a747ab5739,../carteleras/Puebla/Mendrugo_2024Febrero_2.jpeg,Mendrugo,2024,2,8,2025-09-05T01:23:35Z
+openai_image,1deeee1d116d05b9eb49532bf2a97d87f769dfb745251b3f9daf86c589066cd3,../carteleras/Puebla/Mendrugo_2024Marzo_1.jpeg,Mendrugo,2024,3,14,2025-09-05T01:23:35Z
+openai_image,57d4b50e2e930ca0135c984c1ba1353942dc9670295a7dd5c560aa3a3419b914,../carteleras/Puebla/Mendrugo_2024Marzo_2.jpeg,Mendrugo,2024,3,10,2025-09-05T01:23:35Z
