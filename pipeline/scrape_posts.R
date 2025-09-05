@@ -3,13 +3,23 @@ suppressPackageStartupMessages({
   library(tidyverse); library(lubridate); library(httr2); library(readr); library(rvest); library(stringr); library(jsonlite)
 })
 
-cat(">> scrape_posts v1 (Facebook Graph + simple websites -> scraped_candidates.csv)\n")
+cat(">> scrape_posts v1.2 (FB Graph + simple websites) with date window\n")
 
-# --- config & helpers
+# --- args & defaults ---
 args <- commandArgs(trailingOnly = TRUE)
 get_arg <- function(flag, default=NULL){ hit <- which(args==flag); if(length(hit) && hit < length(args)) args[hit+1] else default }
 sources_path <- get_arg("--sources_path","data/venue_sources.csv")
-out_dir <- get_arg("--out_dir","data")
+out_dir      <- get_arg("--out_dir","data")
+
+# Window defaults: from 2024-01-01 to today
+since_str <- get_arg("--since", "2024-01-01")
+until_str <- get_arg("--until", as.character(Sys.Date()))
+SINCE <- as.Date(since_str); UNTIL <- as.Date(until_str)
+if (is.na(SINCE) || is.na(UNTIL) || SINCE > UNTIL) {
+  stop(sprintf("Invalid date window: since=%s until=%s", since_str, until_str))
+}
+cat(sprintf("[window] %s → %s\n", SINCE, UNTIL))
+
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 OPENAI_API_KEY <- Sys.getenv("OPENAI_API_KEY")
@@ -20,18 +30,17 @@ FB_TOKEN <- Sys.getenv("FB_GRAPH_TOKEN")
 
 `%||%` <- function(a,b) if (!is.null(a) && !is.na(a) && length(a)>0 && nzchar(a)) a else b
 
-# --- tiny OpenAI post parser (resolves relative dates by post date)
+# --- OpenAI parser (resolves relative dates based on post publish date) ---
 extract_from_post <- function(text, post_date, venue){
   if (!nzchar(OPENAI_API_KEY) || !nzchar(TEXT_MODEL) || !nzchar(text)) return(tibble())
   pd <- as.Date(post_date)
   prmpt <- sprintf(
-'Tu tarea: a partir del texto de una publicación (fecha de publicación: %s), devuelve SOLO JSON minificado:
+'Convierte el texto de una publicación (fecha de publicación: %s) en SOLO JSON minificado:
 {"venue":"%s","events":[{"date":"YYYY-MM-DD","band":"<artista>","time":null}]}
 Reglas:
-- Si el texto usa expresiones relativas: "hoy", "mañana", "este viernes", "próximo miércoles", calcula la fecha exacta usando la fecha de publicación.
-- Si hay varias fechas o listas de días, emite una entrada por actuación.
-- Incluye "time" si se menciona (e.g., "20:00" o "8 pm"), en 24h si posible; si no, null.
-- NO inventes; si hay duda, omite. SOLO JSON, sin texto extra.
+- Frases relativas ("hoy", "mañana", "este viernes", "próximo miércoles") se resuelven usando la fecha de publicación.
+- Una entrada por actuación; incluye "time" si aparece (24h si posible), si no, null.
+- NO inventes; si hay duda, omite. Sin texto extra.
 ---
 %s
 ---', as.character(pd), venue, substr(text,1,8000))
@@ -59,21 +68,21 @@ Reglas:
       else jsonlite::toJSON(msg, auto_unbox = TRUE)
   }, error=function(e) "")
 
-  # Try JSON parse
   obj <- tryCatch(jsonlite::fromJSON(txt), error=function(e) NULL)
   if (is.null(obj) || is.null(obj$events)) return(tibble())
 
   ev <- if (is.data.frame(obj$events)) obj$events else tibble::as_tibble(obj$events)
   if (!("date" %in% names(ev) && "band" %in% names(ev))) return(tibble())
   ev %>% mutate(
-    venue = obj$venue %||% venue,
+    venue      = obj$venue %||% venue,
     event_date = suppressWarnings(as.Date(.data$date)),
     band_name  = as.character(.data$band),
     event_time = if ("time" %in% names(.)) as.character(.data$time) else NA_character_
-  ) %>% filter(!is.na(event_date), nzchar(band_name))
+  ) %>%
+    filter(!is.na(event_date), nzchar(band_name))
 }
 
-# --- Facebook Graph helpers (Pages only)
+# --- Facebook Graph helpers (Pages only) ---
 fb_slug_from_url <- function(u){
   m <- stringr::str_match(u, "facebook\\.com/([^/?#]+)")
   if (is.na(m[1,2])) NA_character_ else m[1,2]
@@ -85,12 +94,13 @@ fb_page_id <- function(slug){
   if (inherits(resp,"error") || resp_status(resp)>=300) return(NA_character_)
   tryCatch(resp_body_json(resp)$id %||% NA_character_, error=function(e) NA_character_)
 }
-fb_fetch_posts <- function(page_id, since_days = 120){
+fb_fetch_posts <- function(page_id, since_date, until_date){
   if (!nzchar(FB_TOKEN) || !nzchar(page_id)) return(tibble())
-  since_ts <- as.integer(as.POSIXct(Sys.Date()-since_days, tz="UTC"))
+  since_ts <- as.integer(as.POSIXct(as.Date(since_date), tz="UTC"))
+  until_ts <- as.integer(as.POSIXct(as.Date(until_date) + 1, tz="UTC")) - 1  # inclusive end-of-day
   url <- sprintf(
-    "https://graph.facebook.com/v19.0/%s/posts?fields=message,created_time,permalink_url&since=%d&limit=50&access_token=%s",
-    page_id, since_ts, FB_TOKEN
+    "https://graph.facebook.com/v19.0/%s/posts?fields=message,created_time,permalink_url&since=%d&until=%d&limit=50&access_token=%s",
+    page_id, since_ts, until_ts, FB_TOKEN
   )
   resp <- tryCatch(request(url) |> req_perform(), error=function(e) e)
   if (inherits(resp,"error") || resp_status(resp)>=300) return(tibble())
@@ -98,10 +108,12 @@ fb_fetch_posts <- function(page_id, since_days = 120){
   dat <- rj$data
   if (is.null(dat) || !length(dat)) return(tibble())
   tibble(
-    created_time = as.POSIXct(vapply(dat, function(x) x$created_time %||% NA_character_, character(1L)), tz="UTC"),
+    created_time = suppressWarnings(as.POSIXct(vapply(dat, function(x) x$created_time %||% NA_character_, character(1L)))),
     message      = vapply(dat, function(x) x$message %||% "", character(1L)),
     permalink    = vapply(dat, function(x) x$permalink_url %||% "", character(1L))
-  )
+  ) %>% filter(!is.na(created_time),
+               as.Date(created_time) >= SINCE,
+               as.Date(created_time) <= UNTIL)
 }
 
 # --- Simple website scraper (plain text)
@@ -115,7 +127,7 @@ site_fetch_text <- function(url){
   stringr::str_squish(paste(txt, collapse="\n"))
 }
 
-# --- Main
+# --- main ---
 if (!file.exists(sources_path)) {
   cat("[scrape_posts] No sources file at", sources_path, "-> nothing to do.\n")
   write_csv(tibble(), file.path(out_dir, "scraped_candidates.csv"))
@@ -126,7 +138,7 @@ sources <- suppressMessages(readr::read_csv(sources_path, show_col_types = FALSE
 
 out <- list()
 
-# Facebook paths
+# Facebook path
 if (nrow(sources %>% filter(platform=="facebook")) && nzchar(FB_TOKEN)) {
   fb_rows <- sources %>% filter(platform=="facebook")
   for (i in seq_len(nrow(fb_rows))){
@@ -134,7 +146,7 @@ if (nrow(sources %>% filter(platform=="facebook")) && nzchar(FB_TOKEN)) {
     slug <- fb_slug_from_url(url)
     pid  <- fb_page_id(slug)
     if (!nzchar(pid)) next
-    posts <- fb_fetch_posts(pid)
+    posts <- fb_fetch_posts(pid, SINCE, UNTIL)
     if (!nrow(posts)) next
     for (j in seq_len(nrow(posts))){
       txt <- posts$message[j] %||% ""
@@ -151,16 +163,16 @@ if (nrow(sources %>% filter(platform=="facebook")) && nzchar(FB_TOKEN)) {
   if (!nzchar(FB_TOKEN)) cat("[scrape_posts] FB_GRAPH_TOKEN not set; skipping Facebook.\n")
 }
 
-# Website paths (very heuristic)
+# Website path (heuristic) — filter by event_date window after parse
 wb_rows <- sources %>% filter(platform=="website")
 if (nrow(wb_rows)) {
   for (i in seq_len(nrow(wb_rows))){
     ven <- wb_rows$venue[i]; url <- wb_rows$url[i]
     txt <- site_fetch_text(url)
     if (!nzchar(txt)) next
-    # Use "today" as publication date fallback for relative phrasing (best effort)
     evs <- extract_from_post(txt, Sys.Date(), ven)
     if (nrow(evs)) {
+      evs <- evs %>% filter(event_date >= SINCE, event_date <= UNTIL)
       evs$source_url <- url
       evs$platform   <- "website"
       out[[length(out)+1]] <- evs
